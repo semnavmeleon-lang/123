@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Автодозвон Yealink</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #1e1e1e;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+    }
+    .box {
+        background: #2a2a2a;
+        padding: 30px 40px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        text-align: center;
+    }
+    h2 { margin-top: 0; font-weight: 500; }
+    input {
+        font-size: 20px;
+        padding: 10px;
+        width: 220px;
+        border-radius: 6px;
+        border: 1px solid #555;
+        background: #111;
+        color: #fff;
+        text-align: center;
+    }
+    button {
+        margin-top: 15px;
+        font-size: 18px;
+        padding: 10px 25px;
+        border: none;
+        border-radius: 6px;
+        background: #2e7d32;
+        color: white;
+        cursor: pointer;
+    }
+    button:hover { background: #388e3c; }
+    .status { margin-top: 15px; font-size: 14px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<div class="box">
+    <h2>Автодозвон (Yealink T30)</h2>
+    <input type="text" id="number" placeholder="Введите номер" autofocus>
+    <br>
+    <button onclick="dial()">Позвонить</button>
+    <div class="status" id="status"></div>
+</div>
+
+<script>
+    const PHONE_IP = "172.26.47.19";
+
+    function dial() {
+        const number = document.getElementById('number').value.trim();
+        if (!number) {
+            document.getElementById('status').innerText = "Введите номер";
+            return;
+        }
+
+        const digits = number.replace(/\D/g, '');
+        const url = `http://${PHONE_IP}/servlet?m=action&p=dial&num=<${digits}>`;
+
+        document.getElementById('status').innerText = "Набираю: " + digits;
+        window.location.href = url;
+    }
+
+    document.getElementById('number').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            dial();
+        }
+    });
+</script>
+
+</body>
+</html>
