@@ -1,0 +1,79 @@
+Private Sub Worksheet_Change(ByVal Target As Range)
+    Dim cell As Range
+    Dim arr() As String
+    Dim i As Long
+    Dim cleanNum As String
+    
+    ' Проверяем, что изменения в нужном диапазоне (например, столбец A)
+    If Intersect(Target, Range("A:A")) Is Nothing Then Exit Sub
+    
+    On Error GoTo ErrHandler
+    Application.EnableEvents = False
+    
+    For Each cell In Target.Cells
+        If InStr(1, cell.Value, ",") > 0 Then
+            arr = Split(cell.Value, ",")
+            For i = 0 To UBound(arr)
+                ' Удаляем все нецифровые символы
+                cleanNum = ""
+                Dim j As Long
+                For j = 1 To Len(Trim(arr(i)))
+                    If IsNumeric(Mid(Trim(arr(i)), j, 1)) Then
+                        cleanNum = cleanNum & Mid(Trim(arr(i)), j, 1)
+                    End If
+                Next j
+                
+                ' Если номер начинается на 7 или 8 и длина 11
+                If Len(cleanNum) = 11 Then
+                    cleanNum = "+7 (" & Mid(cleanNum, 2, 3) & ") " & Mid(cleanNum, 5, 3) & "-" & Mid(cleanNum, 8, 2) & "-" & Mid(cleanNum, 10, 2)
+                ElseIf Len(cleanNum) = 10 Then
+                    cleanNum = "+7 (" & Mid(cleanNum, 1, 3) & ") " & Mid(cleanNum, 4, 3) & "-" & Mid(cleanNum, 7, 2) & "-" & Mid(cleanNum, 9, 2)
+                End If
+                arr(i) = cleanNum
+            Next i
+            cell.Value = Join(arr, ", ")
+        End If
+    Next cell
+    
+ErrHandler:
+    Application.EnableEvents = True
+End SubPrivate Sub Worksheet_Change(ByVal Target As Range)
+    Dim cell As Range
+    Dim arr() As String
+    Dim i As Long
+    Dim cleanNum As String
+    
+    ' Проверяем, что изменения в нужном диапазоне (например, столбец A)
+    If Intersect(Target, Range("A:A")) Is Nothing Then Exit Sub
+    
+    On Error GoTo ErrHandler
+    Application.EnableEvents = False
+    
+    For Each cell In Target.Cells
+        If InStr(1, cell.Value, ",") > 0 Then
+            arr = Split(cell.Value, ",")
+            For i = 0 To UBound(arr)
+                ' Удаляем все нецифровые символы
+                cleanNum = ""
+                Dim j As Long
+                For j = 1 To Len(Trim(arr(i)))
+                    If IsNumeric(Mid(Trim(arr(i)), j, 1)) Then
+                        cleanNum = cleanNum & Mid(Trim(arr(i)), j, 1)
+                    End If
+                Next j
+                
+                ' Если номер начинается на 7 или 8 и длина 11
+                If Len(cleanNum) = 11 Then
+                    cleanNum = "+7 (" & Mid(cleanNum, 2, 3) & ") " & Mid(cleanNum, 5, 3) & "-" & Mid(cleanNum, 8, 2) & "-" & Mid(cleanNum, 10, 2)
+                ElseIf Len(cleanNum) = 10 Then
+                    cleanNum = "+7 (" & Mid(cleanNum, 1, 3) & ") " & Mid(cleanNum, 4, 3) & "-" & Mid(cleanNum, 7, 2) & "-" & Mid(cleanNum, 9, 2)
+                End If
+                arr(i) = cleanNum
+            Next i
+            cell.Value = Join(arr, ", ")
+        End If
+    Next cell
+    
+ErrHandler:
+    Application.EnableEvents = True
+End Sub
