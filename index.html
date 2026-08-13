@@ -409,7 +409,7 @@
             <input id="f_year" placeholder="2026">
           </label>
 
-          <div class="section-label" id="pairFieldsLabel" style="display:none">Контакты (для согласия на рекламу)</div>
+          <div class="section-label" id="pairFieldsLabel" style="display:none">Контакты (для согласия на рекламу, необязательно)</div>
           <div id="pairFieldsBlock" style="display:none; grid-column: 1 / -1;">
             <div class="grid" style="grid-template-columns: 1fr 1fr; padding: 0;">
               <label>Телефон
@@ -1035,6 +1035,15 @@
     return ` ${vydan ? "выдан " : ""}${parts.join(sep)},`;
   }
 
+  // Телефон и email тоже необязательны - если оба пустые, фраза про контакты просто
+  // выпадает из предложения целиком, а не оставляет "телефона: , почты: ,".
+  function formatContactClause(d) {
+    const parts = [];
+    if (d.phone) parts.push(`контактный номер телефона: ${d.phone}`);
+    if (d.email) parts.push(`адрес электронной почты: ${d.email}`);
+    return parts.length ? `, ${parts.join(", ")}` : "";
+  }
+
   async function addOtkazPage(pdfDoc, font, fontBold, d) {
     const page = pdfDoc.addPage([595.28, 841.89]);
     const margin = 56.7;
@@ -1329,8 +1338,8 @@
     flow.gap(10);
 
     const intro =
-      `Я, ${d.fio}, ${d.dob} года рождения, контактный номер телефона: ${d.phone}, адрес электронной почты: ` +
-      `${d.email || "—"}, настоящим подтверждаю своё свободное, информированное добровольное согласие Страховому ` +
+      `Я, ${d.fio}, ${d.dob} года рождения${formatContactClause(d)}, настоящим подтверждаю своё свободное, ` +
+      `информированное добровольное согласие Страховому ` +
       `Акционерному Обществу «ВСК» (САО «ВСК»), созданному и действующему в соответствии с законодательством ` +
       `Российской Федерации, расположенному по адресу 121552, г. Москва, ул. Островная, дом 4, ИНН: 7710026574, ` +
       `ОГРН: 1027700186062, на направление мне рекламы и юридически значимой информации, а также на осуществление ` +
@@ -1475,15 +1484,15 @@
   ];
   // "Кем и когда выдан паспорт" в ОСАГО-полисе/заявлении обычно вообще не печатается -
   // это поле не должно блокировать формирование документа, если его нечем заполнить.
-  const OPTIONAL_FIELDS = ["f_passDate", "f_passIssuer"];
-  // Телефон и email нужны только для собранного файла (полис+заявление) - там из них
-  // заполняется "Согласие на получение рекламных сообщений". Для старого режима
-  // "один файл -> +страница отказа" эти поля не нужны и не должны блокировать генерацию.
+  // Телефон и email показываются только для собранного файла (полис+заявление) - из них
+  // заполняется "Согласие на получение рекламных сообщений". Как и дату/орган выдачи
+  // паспорта, их можно оставить пустыми - в тексте согласия просто не будет этой строчки.
+  const OPTIONAL_FIELDS = ["f_passDate", "f_passIssuer", "f_phone", "f_email"];
   const PAIR_FIELDS = ["f_phone", "f_email"];
-  const ALL_FIELDS = fields.concat(OPTIONAL_FIELDS, PAIR_FIELDS);
+  const ALL_FIELDS = fields.concat(OPTIONAL_FIELDS);
 
-  function requiredFieldsFor(item) {
-    return item && (item.kind === "pair" || item.kind === "combo") ? fields.concat(PAIR_FIELDS) : fields;
+  function requiredFieldsFor() {
+    return fields;
   }
 
   const STATUS_TITLE = {
