@@ -1364,6 +1364,9 @@
     flow.paragraph(font, SIZE, `Подпись: ______________ Расшифровка подписи: ${d.fio}`, BLACK, LH, false);
   }
 
+  // Порядок итогового файла: полис, заявление, два согласия, заявление на отказ от
+  // передачи документов на копирование - отказ нужен и здесь, а не только в режиме
+  // "один уже цельный файл".
   async function buildCombinedPdf(polisBytes, zayavBytes, data) {
     const polisDoc = await window.PDFLib.PDFDocument.load(polisBytes);
     const zayavDoc = await window.PDFLib.PDFDocument.load(zayavBytes);
@@ -1373,11 +1376,12 @@
     const polisPages = await outDoc.copyPages(polisDoc, polisDoc.getPageIndices());
     polisPages.forEach((p) => outDoc.addPage(p));
 
-    await addPersonalDataConsentPage(outDoc, font, fontBold, data);
-    await addMarketingConsentPage(outDoc, font, fontBold, data);
-
     const zayavPages = await outDoc.copyPages(zayavDoc, zayavDoc.getPageIndices());
     zayavPages.forEach((p) => outDoc.addPage(p));
+
+    await addPersonalDataConsentPage(outDoc, font, fontBold, data);
+    await addMarketingConsentPage(outDoc, font, fontBold, data);
+    await addOtkazPage(outDoc, font, fontBold, data);
 
     return outDoc.save();
   }
