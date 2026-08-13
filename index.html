@@ -1093,15 +1093,15 @@
   // страница 1 может не вместить весь текст. Вместо того чтобы обрезать текст по нижнему
   // краю листа, перед каждым блоком проверяем, поместится ли он, и при необходимости
   // заводим новую страницу - как делает любой текстовый редактор.
-  function makeFlow(pdfDoc) {
+  function makeFlow(pdfDoc, margin = PAGE_MARGIN) {
     let page = pdfDoc.addPage(PAGE_SIZE);
-    let width = page.getWidth() - PAGE_MARGIN * 2;
-    let y = page.getHeight() - PAGE_MARGIN;
+    let width = page.getWidth() - margin * 2;
+    let y = page.getHeight() - margin;
     function ensureSpace(h) {
-      if (y - h < PAGE_MARGIN) {
+      if (y - h < margin) {
         page = pdfDoc.addPage(PAGE_SIZE);
-        width = page.getWidth() - PAGE_MARGIN * 2;
-        y = page.getHeight() - PAGE_MARGIN;
+        width = page.getWidth() - margin * 2;
+        y = page.getHeight() - margin;
       }
     }
     return {
@@ -1122,45 +1122,49 @@
       },
       paragraph(font_, size, text, color, lineHeight, justify) {
         ensureSpace(wrapWords(font_, size, text, width).length * lineHeight);
-        y = drawParagraph(page, font_, size, text, PAGE_MARGIN, width, y, color, lineHeight, justify);
+        y = drawParagraph(page, font_, size, text, margin, width, y, color, lineHeight, justify);
       },
       centered(font_, size, text, color) {
         ensureSpace(size + 4);
-        y = drawCentered(page, font_, size, text, PAGE_MARGIN, width, y, color);
+        y = drawCentered(page, font_, size, text, margin, width, y, color);
       },
       centeredWrapped(font_, size, text, color, lineHeight) {
         const lines = wrapWords(font_, size, text, width);
         ensureSpace(lines.length * lineHeight);
         for (const words of lines) {
-          drawCentered(page, font_, size, words.join(" "), PAGE_MARGIN, width, y, color);
+          drawCentered(page, font_, size, words.join(" "), margin, width, y, color);
           y -= lineHeight;
         }
       },
       heading(font_, size, text, color) {
         ensureSpace(size + 4);
-        page.drawText(text, { x: PAGE_MARGIN, y, size, font: font_, color });
+        page.drawText(text, { x: margin, y, size, font: font_, color });
         y -= size + 4;
       },
       bullets(font_, size, items, color, lineHeight) {
         const indent = 14;
         const h = items.reduce((s, t) => s + wrapWords(font_, size, t, width - indent).length * lineHeight, 0);
         ensureSpace(h);
-        y = drawBulletList(page, font_, size, items, PAGE_MARGIN, width, y, color, lineHeight);
+        y = drawBulletList(page, font_, size, items, margin, width, y, color, lineHeight);
       },
     };
   }
 
+  // Текста в этом согласии больше, чем в остальных страницах, поэтому у него отдельные,
+  // более плотные размер шрифта/интервалы/поля - чтобы обычные ФИО и адрес умещались на
+  // одну страницу, как просили. Перенос на вторую страницу остаётся подстраховкой на
+  // случай необычно длинных данных - обрезать текст вместо этого нельзя.
   async function addPersonalDataConsentPage(pdfDoc, font, fontBold, d) {
     const BLACK = window.PDFLib.rgb(0, 0, 0);
     const GRAY = window.PDFLib.rgb(0.4, 0.4, 0.4);
-    const SIZE = 9.3;
-    const LH = 12.2;
-    const flow = makeFlow(pdfDoc);
+    const SIZE = 8;
+    const LH = 10.3;
+    const flow = makeFlow(pdfDoc, 40);
 
-    flow.centered(fontBold, 13, "СОГЛАСИЕ", BLACK);
-    flow.gap(17);
-    flow.centered(fontBold, 11, "на обработку персональных данных", BLACK);
-    flow.gap(20);
+    flow.centered(fontBold, 12, "СОГЛАСИЕ", BLACK);
+    flow.gap(14);
+    flow.centered(fontBold, 10, "на обработку персональных данных", BLACK);
+    flow.gap(15);
 
     const intro =
       `Я, ${d.fio}, ${d.dob} года рождения, паспорт гражданина РФ серия ${d.passSeries} № ${d.passNumber},` +
@@ -1178,7 +1182,7 @@
       `договоров страхования, а также в целях осуществления страховой и сопутствующей страхованию деятельности, ` +
       `исполнения требований действующего законодательства Российской Федерации.`;
     flow.paragraph(font, SIZE, intro, BLACK, LH, true);
-    flow.gap(8);
+    flow.gap(5);
 
     const dataScope =
       `Согласие дается на обработку следующих предоставленных мной персональных данных: фамилия, имя, отчество, ` +
@@ -1191,7 +1195,7 @@
       `обращения за оказанием медицинской помощи, состоянии моего здоровья и диагнозах, иных сведения, полученные ` +
       `при медицинском обследовании и лечении.`;
     flow.paragraph(font, SIZE, dataScope, BLACK, LH, true);
-    flow.gap(8);
+    flow.gap(5);
 
     const operatorRights =
       `Оператор вправе осуществлять все необходимые действия, предусмотренные п. 3 ст. 3 Федерального закона от ` +
@@ -1203,7 +1207,7 @@
       `исполнения Оператором Договора страхования, а также для исполнения Оператором обязанностей, возложенных на ` +
       `него законодательством Российской Федерации.`;
     flow.paragraph(font, SIZE, operatorRights, BLACK, LH, true);
-    flow.gap(8);
+    flow.gap(5);
 
     const guarantees =
       `Я проинформирован о том, что Оператор обязуется обрабатывать персональные данные исключительно в ` +
@@ -1211,7 +1215,7 @@
       `персональным данным только уполномоченным работникам; не распространять и не раскрывать данные третьим ` +
       `лицам без получения отдельного согласия за исключением случаев, предусмотренных законом.`;
     flow.paragraph(font, SIZE, guarantees, BLACK, LH, true);
-    flow.gap(8);
+    flow.gap(5);
 
     flow.heading(font, SIZE, "Настоящее согласие действует:", BLACK);
     flow.bullets(
@@ -1229,7 +1233,7 @@
       BLACK,
       LH
     );
-    flow.gap(6);
+    flow.gap(4);
 
     flow.heading(font, SIZE, "Обращение, направляемое Оператору, должно содержать следующую информацию:", BLACK);
     flow.bullets(
@@ -1249,7 +1253,7 @@
       BLACK,
       LH
     );
-    flow.gap(6);
+    flow.gap(4);
 
     const continuedProcessing =
       `Мне разъяснено, что Оператор вправе продолжить обработку моих персональных данных после получения отзыва ` +
@@ -1257,7 +1261,7 @@
       `закона от 27.07.2006 № 152-ФЗ «О персональных данных» при условии, что при этом не будут нарушаться мои ` +
       `права и свободы.`;
     flow.paragraph(font, SIZE, continuedProcessing, BLACK, LH, true);
-    flow.gap(8);
+    flow.gap(5);
 
     flow.heading(font, SIZE, "Настоящим подтверждаю, что:", BLACK);
     flow.bullets(
@@ -1274,27 +1278,27 @@
       BLACK,
       LH
     );
-    flow.gap(20);
+    flow.gap(13);
 
     flow.paragraph(font, SIZE, `Дата подписания: «${d.day}» ${d.month} ${d.year} г.`, BLACK, LH, false);
     flow.gap(4);
     flow.paragraph(font, SIZE, `Подпись: ______________ Расшифровка подписи: ${d.fio}`, BLACK, LH, false);
-    flow.gap(16);
+    flow.gap(10);
 
     flow.paragraph(
       font,
-      8,
+      6.5,
       `Политика обработки персональных данных САО «ВСК»: https://www.vsk.ru/o-kompanii/dlya-kliyentov?t=personalpolicy&case=personalpolicy`,
       GRAY,
-      10.5,
+      8.5,
       false
     );
     flow.paragraph(
       font,
-      8,
+      6.5,
       `Реестр субоператоров: https://www.vsk.ru/o-kompanii/dlya-kliyentov?t=personalpolicy&case=registerofsuboperators`,
       GRAY,
-      10.5,
+      8.5,
       false
     );
   }
