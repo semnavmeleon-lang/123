@@ -844,6 +844,11 @@
   // сшивать и дополнять согласиями, от уже цельного файла (в котором есть всё нужное) —
   // для такого файла работает старая логика (просто добавить страницу-отказ).
   // Если найдены оба маркера сразу - это уже комбинированный документ, а не половинка.
+  // Возвращает: "polis" / "zayavlenie" - только половина, ждёт пару; "combo" - полис и
+  // заявление уже сшиты в один файл, но согласий в нём ещё нет (нужно достроить их и
+  // отказ); "complete" - согласия уже есть (кто-то прислал уже готовый итоговый файл, в
+  // т.ч. ранее собранный этим же инструментом) либо тип вообще не распознан - в обоих
+  // случаях менять нечего, кроме страницы отказа (старая логика).
   function classifyDocType(text) {
     // "обязательного страхования гражданской ответственности владельцев..." - это официальное
     // название ОСАГО, оно встречается и в полисе, и в заявлении, поэтому непригодно как маркер.
@@ -851,10 +856,13 @@
     // ... получил"), но не капсом, а капсом она напечатана только в заголовке самого полиса.
     const isPolis = /Срок\s+страхования\s+с/i.test(text) || /СТРАХОВОЙ\s+ПОЛИС/.test(text);
     const isZayav = /Заявление\s+о\s+заключении\s+договора\s+обязательного\s+страхования/i.test(text);
-    if (isPolis && isZayav) return "unknown";
+    const hasConsents =
+      /Согласие\s+на\s+обработку\s+персональных\s+данных/i.test(text) ||
+      /Согласие\s*\n?\s*на\s+получение\s+рекламных\s+сообщений/i.test(text);
+    if (isPolis && isZayav) return hasConsents ? "complete" : "combo";
     if (isZayav) return "zayavlenie";
     if (isPolis) return "polis";
-    return "unknown";
+    return "complete";
   }
 
   function parseContactInfo(text) {
@@ -1390,6 +1398,25 @@
     return outDoc.save();
   }
 
+  // Тот же результат, что и buildCombinedPdf, но для файла, в котором полис и заявление
+  // уже сшиты страховщиком в один PDF (типичный формат некоторых выгрузок). Страницы
+  // источника просто копируются как есть - в них уже правильный порядок полис -> заявление -
+  // и к ним достраиваются два согласия и отказ.
+  async function buildFromComboPdf(bytes, data) {
+    const srcDoc = await window.PDFLib.PDFDocument.load(bytes);
+    const outDoc = await window.PDFLib.PDFDocument.create();
+    const { font, fontBold } = await embedFonts(outDoc);
+
+    const srcPages = await outDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+    srcPages.forEach((p) => outDoc.addPage(p));
+
+    await addPersonalDataConsentPage(outDoc, font, fontBold, data);
+    await addMarketingConsentPage(outDoc, font, fontBold, data);
+    await addOtkazPage(outDoc, font, fontBold, data);
+
+    return outDoc.save();
+  }
+
   function sanitizeFilename(name) {
     return name.replace(/[\\/:*?"<>|]/g, "_").trim();
   }
@@ -1456,7 +1483,7 @@
   const ALL_FIELDS = fields.concat(OPTIONAL_FIELDS, PAIR_FIELDS);
 
   function requiredFieldsFor(item) {
-    return item && item.kind === "pair" ? fields.concat(PAIR_FIELDS) : fields;
+    return item && (item.kind === "pair" || item.kind === "combo") ? fields.concat(PAIR_FIELDS) : fields;
   }
 
   const STATUS_TITLE = {
@@ -1472,6 +1499,7 @@
     "polis-half": "полис · ждёт заявление",
     "zayav-half": "заявление · ждёт полис",
     pair: "полис + заявление",
+    combo: "полис + заявление (один файл) · без согласий",
   };
 
   function computeOutputFilename(data) {
@@ -1669,14 +1697,26 @@
         data.phone = contact.phone;
         data.email = contact.email;
 
-        if (docType === "unknown") {
-          // Уже цельный документ (в нём есть и признаки полиса, и признаки заявления,
-          // либо не распознано ни то ни другое) - работает прежняя логика "один файл -> +отказ".
+        if (docType === "complete") {
+          // Согласия уже есть в файле (или тип вообще не распознан) - работает прежняя
+          // логика "один файл -> +отказ", добавлять больше нечего.
           item.kind = "single";
           item.bytes = bytes;
           item.data = data;
           item.missing = missing;
           item.status = missing.length ? "warn" : "ok";
+        } else if (docType === "combo") {
+          // Полис и заявление уже сшиты страховщиком в один файл, но согласий в нём нет -
+          // достраиваем их и отказ, как в режиме "пара из двух файлов". Для согласия на
+          // рекламу дополнительно нужны телефон/email.
+          item.kind = "combo";
+          item.bytes = bytes;
+          item.data = data;
+          const comboMissing = missing.slice();
+          if (!data.phone && !comboMissing.includes("телефон")) comboMissing.push("телефон");
+          if (!data.email && !comboMissing.includes("email")) comboMissing.push("email");
+          item.missing = comboMissing;
+          item.status = comboMissing.length ? "warn" : "ok";
         } else {
           const halfKind = docType === "polis" ? "polis-half" : "zayav-half";
           const oppositeKind = docType === "polis" ? "zayav-half" : "polis-half";
@@ -1791,7 +1831,7 @@
     document.getElementById("f_policyLabel").textContent = d.policySeries
       ? `${d.policySeries} ${d.policyNumber}`
       : "";
-    const isPair = item.kind === "pair";
+    const isPair = item.kind === "pair" || item.kind === "combo";
     pairFieldsBlockEl.style.display = isPair ? "block" : "none";
     pairFieldsLabelEl.style.display = isPair ? "block" : "none";
     highlightEmpty(item);
@@ -1945,6 +1985,8 @@
             bytes =
               item.kind === "pair"
                 ? await buildCombinedPdf(item.polisBytes, item.zayavBytes, data)
+                : item.kind === "combo"
+                ? await buildFromComboPdf(item.bytes, data)
                 : await buildFinalPdf(item.bytes, data);
             filename = computeOutputFilename(data);
             item.outputBytes = bytes;
@@ -2032,6 +2074,8 @@
       const bytes =
         item.kind === "pair"
           ? await buildCombinedPdf(item.polisBytes, item.zayavBytes, formData)
+          : item.kind === "combo"
+          ? await buildFromComboPdf(item.bytes, formData)
           : await buildFinalPdf(item.bytes, formData);
       const filename = computeOutputFilename(formData);
       item.outputBytes = bytes;
