@@ -385,10 +385,10 @@
           <label>Номер паспорта
             <input id="f_passNumber">
           </label>
-          <label>Дата выдачи паспорта
+          <label>Дата выдачи паспорта (необязательно)
             <input id="f_passDate" placeholder="ДД.ММ.ГГГГ">
           </label>
-          <label class="wide">Кем выдан паспорт
+          <label class="wide">Кем выдан паспорт (необязательно)
             <span class="row-with-btn">
               <input id="f_passIssuer" placeholder="напр. ГУ МВД РОССИИ ПО МОСКОВСКОЙ ОБЛАСТИ">
               <button type="button" id="recalcIssuerBtn" title="Подставить по адресу регистрации">&#8635;</button>
@@ -799,7 +799,8 @@
         .replace(/[,\s]+$/, "")
         .trim();
     } else {
-      missing.push("дата выдачи паспорта");
+      // Необязательное поле - ОСАГО-документы почти никогда не печатают дату/орган выдачи
+      // паспорта, поэтому отсутствие не считаем поводом для предупреждения "не распознано".
       data.passIssuer = "";
     }
 
@@ -1015,6 +1016,17 @@
     return y;
   }
 
+  // Собирает кусок "..., ДД.ММ.ГГГГ г., КЕМ ВЫДАН," (или "..., выдан ДД.ММ.ГГГГ г. КЕМ ВЫДАН,").
+  // Оба поля необязательны и часто пустые - ОСАГО-документы их не печатают - поэтому
+  // при отсутствии обоих просто ничего не вставляем, не оставляя "выдан  г. ,".
+  function formatPassportIssued(d, { vydan = false, sep = ", " } = {}) {
+    const parts = [];
+    if (d.passDate) parts.push(`${d.passDate} г.`);
+    if (d.passIssuer) parts.push(d.passIssuer);
+    if (!parts.length) return "";
+    return ` ${vydan ? "выдан " : ""}${parts.join(sep)},`;
+  }
+
   async function addOtkazPage(pdfDoc, font, fontBold, d) {
     const page = pdfDoc.addPage([595.28, 841.89]);
     const margin = 56.7;
@@ -1044,8 +1056,8 @@
     y -= 8;
 
     const bodyText =
-      `Я, гражданин ${d.fio}, ${d.dob} года рождения, паспорт: серия ${d.passSeries} №${d.passNumber}, ` +
-      `${d.passDate} г., ${d.passIssuer}, зарегистрированный по адресу: ${d.address}, ` +
+      `Я, гражданин ${d.fio}, ${d.dob} года рождения, паспорт: серия ${d.passSeries} №${d.passNumber},` +
+      `${formatPassportIssued(d, { sep: ", " })} зарегистрированный по адресу: ${d.address}, ` +
       `руководствуясь положениями Федерального закона «Об обязательном страховании гражданской ответственности ` +
       `владельцев транспортных средств» от 25.04.2002 №40-ФЗ, не предусматривающего обязанность страхователя ` +
       `передавать страховщику документы, необходимые для заключения (изменения условий, досрочного прекращения) ` +
@@ -1151,8 +1163,8 @@
     flow.gap(20);
 
     const intro =
-      `Я, ${d.fio}, ${d.dob} года рождения, паспорт гражданина РФ серия ${d.passSeries} № ${d.passNumber}, ` +
-      `выдан ${d.passDate} г. ${d.passIssuer}, зарегистрированный(ая) по адресу: ${d.address}, настоящим в ` +
+      `Я, ${d.fio}, ${d.dob} года рождения, паспорт гражданина РФ серия ${d.passSeries} № ${d.passNumber},` +
+      `${formatPassportIssued(d, { vydan: true, sep: " " })} зарегистрированный(ая) по адресу: ${d.address}, настоящим в ` +
       `соответствии с п. 8 ч. 2 ст. 10 Федерального закона от 27.07.2006 №152-ФЗ «О персональных данных» ` +
       `предоставляю Оператору — Страховому акционерному обществу «ВСК», местонахождение: 121551, г. Москва, ` +
       `ул. Островная, д. 4, номер в Реестре операторов персональных данных № 09-0060538, информированное ` +
@@ -1421,21 +1433,22 @@
     "f_dob",
     "f_passSeries",
     "f_passNumber",
-    "f_passDate",
-    "f_passIssuer",
     "f_address",
     "f_day",
     "f_month",
     "f_year",
   ];
+  // "Кем и когда выдан паспорт" в ОСАГО-полисе/заявлении обычно вообще не печатается -
+  // это поле не должно блокировать формирование документа, если его нечем заполнить.
+  const OPTIONAL_FIELDS = ["f_passDate", "f_passIssuer"];
   // Телефон и email нужны только для собранного файла (полис+заявление) - там из них
   // заполняется "Согласие на получение рекламных сообщений". Для старого режима
   // "один файл -> +страница отказа" эти поля не нужны и не должны блокировать генерацию.
   const PAIR_FIELDS = ["f_phone", "f_email"];
-  const ALL_FIELDS = fields.concat(PAIR_FIELDS);
+  const ALL_FIELDS = fields.concat(OPTIONAL_FIELDS, PAIR_FIELDS);
 
   function requiredFieldsFor(item) {
-    return item && item.kind === "pair" ? ALL_FIELDS : fields;
+    return item && item.kind === "pair" ? fields.concat(PAIR_FIELDS) : fields;
   }
 
   const STATUS_TITLE = {
@@ -1594,7 +1607,6 @@
     if (!merged.fio) missing.push("ФИО");
     if (!merged.dob) missing.push("дата рождения");
     if (!merged.passSeries || !merged.passNumber) missing.push("серия/номер паспорта");
-    if (!merged.passDate) missing.push("дата выдачи паспорта");
     if (!merged.address) missing.push("адрес регистрации");
     if (!merged.day || !merged.month || !merged.year) missing.push("дата заключения договора");
     if (!merged.phone) missing.push("телефон");
