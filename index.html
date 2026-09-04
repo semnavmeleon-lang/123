@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Генератор дополнительных соглашений ВСК</title>
+<title>Генератор допников КАСКО</title>
 <style>
   :root {
     --bg: #f3f5fa;
@@ -223,26 +223,30 @@
 <body>
 <div class="page">
 
-  <h1>Генератор дополнительных соглашений (допников) ВСК</h1>
-  <p class="subtitle">Загрузите PDF действующего полиса (КАСКО или ОСАГО) — тул подтянет данные страхователя и договора. Дальше укажите, что меняется, и скачайте готовое допсоглашение. Всё выполняется в браузере, файлы никуда не отправляются.</p>
+  <h1>Генератор допников КАСКО</h1>
+  <p class="subtitle">Загрузите PDF действующего полиса КАСКО — тул подтянет данные страхователя и договора. Всё выполняется в браузере, файлы никуда не отправляются.</p>
 
   <div class="card">
-    <div class="section-title">1. Исходный полис (необязательно, но ускоряет заполнение)</div>
+    <div class="section-title">Что меняется этим допсоглашением</div>
+    <div class="choice-row">
+      <div class="choice-opt active" id="kindHolder" data-kind="holder">Замена собственника / страхователя<span class="choice-sub">ФИО / паспорт / адрес / телефон</span></div>
+      <div class="choice-opt" id="kindDrivers" data-kind="drivers">Замена ВУ и лиц, допущенных к управлению<span class="choice-sub">список водителей с их вод. удостоверениями</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Исходный полис (необязательно, но ускоряет заполнение)</div>
     <div class="dropzone" id="dropzone">
       <div><b>Нажмите, чтобы выбрать PDF</b> или перетащите файл сюда</div>
-      <div style="margin-top:4px;">Полис КАСКО или ОСАГО — данные страхователя, паспорта, адреса и номера договора подставятся автоматически</div>
+      <div style="margin-top:4px;">Полис КАСКО — данные страхователя, паспорта, адреса и номера договора подставятся автоматически</div>
     </div>
     <input type="file" id="uploadInput" accept="application/pdf">
     <div class="upload-status" id="uploadStatus"></div>
   </div>
 
   <div class="card">
-    <div class="section-title">2. Договор, к которому оформляется допсоглашение</div>
-    <div class="choice-row">
-      <div class="choice-opt active" id="baseKasko" data-base="kasko">КАСКО<span class="choice-sub">страхование средств наземного транспорта</span></div>
-      <div class="choice-opt" id="baseOsago" data-base="osago">ОСАГО<span class="choice-sub">обязательное страхование гражд. ответственности</span></div>
-    </div>
-    <div class="grid" style="margin-top:14px;">
+    <div class="section-title">Договор, к которому оформляется допсоглашение</div>
+    <div class="grid">
       <label>Номер договора
         <input id="d_contractNumber" placeholder="26470F5O00049">
       </label>
@@ -259,7 +263,7 @@
   </div>
 
   <div class="card">
-    <div class="section-title">3. Страхователь (текущий, по договору)</div>
+    <div class="section-title">Страхователь (текущий, по договору)</div>
     <div class="grid">
       <label class="wide">ФИО
         <input id="d_holderFio" placeholder="Иванов Иван Иванович">
@@ -283,20 +287,9 @@
   </div>
 
   <div class="card">
-    <div class="section-title">4. Что меняется этим допсоглашением</div>
-    <div class="choice-row">
-      <div class="choice-opt active" id="kindDrivers" data-kind="drivers">Состав водителей<span class="choice-sub">лица, преимущественно управляющие ТС</span></div>
-      <div class="choice-opt" id="kindHolder" data-kind="holder">Данные страхователя<span class="choice-sub">ФИО / паспорт / адрес / телефон</span></div>
-    </div>
+    <div class="section-title">Новые данные</div>
 
-    <div class="doc-block active" id="blockDrivers" style="margin-top:14px;">
-      <div class="list-table">
-        <div id="driversRows"></div>
-        <button type="button" class="add-row-btn" id="addDriverBtn">+ добавить водителя</button>
-      </div>
-    </div>
-
-    <div class="doc-block" id="blockHolder" style="margin-top:14px;">
+    <div class="doc-block active" id="blockHolder">
       <div class="grid">
         <label class="wide">Новое ФИО страхователя/собственника/выгодоприобретателя
           <input id="h_fio" placeholder="Иванов Иван Иванович">
@@ -321,10 +314,17 @@
         </label>
       </div>
     </div>
+
+    <div class="doc-block" id="blockDrivers">
+      <div class="list-table">
+        <div id="driversRows"></div>
+        <button type="button" class="add-row-btn" id="addDriverBtn">+ добавить водителя</button>
+      </div>
+    </div>
   </div>
 
   <div class="card">
-    <div class="section-title">5. Представитель страховщика и подписание</div>
+    <div class="section-title">Представитель страховщика и подписание</div>
     <div class="grid">
       <label class="wide">Должность представителя
         <input id="d_repPosition" placeholder="Заместителя директора филиала Руководителя Дирекции по работе с автодилерами Ставропольского филиала">
@@ -840,13 +840,8 @@
     const { font, fontBold } = await embedFonts(outDoc);
     const flow = makeFlow(outDoc);
 
-    const contractPhrase =
-      d.baseType === "osago"
-        ? "обязательного страхования гражданской ответственности владельцев транспортных средств"
-        : "страхования средств наземного транспорта";
-
     flow.centeredWrapped(fontBold, 12, `ДОПОЛНИТЕЛЬНОЕ СОГЛАШЕНИЕ № ${d.contractNumber || "—"}-${d.suffix || "D0001"}`, BLACK, 15);
-    flow.centeredWrapped(fontBold, 12, `к ДОГОВОРУ ${contractPhrase}`, BLACK, 15);
+    flow.centeredWrapped(fontBold, 12, "к ДОГОВОРУ страхования средств наземного транспорта", BLACK, 15);
     flow.centered(fontBold, 12, `№ ${d.contractNumber || "—"} от ${d.contractDate || "__.__.____"} г.`, BLACK);
     flow.gap(22);
 
@@ -979,23 +974,7 @@
     return el ? el.value.trim() : "";
   }
 
-  let baseType = "kasko";
-  const baseKasko = document.getElementById("baseKasko");
-  const baseOsago = document.getElementById("baseOsago");
-  baseKasko.addEventListener("click", () => {
-    baseType = "kasko";
-    baseKasko.classList.add("active");
-    baseOsago.classList.remove("active");
-    scheduleSave();
-  });
-  baseOsago.addEventListener("click", () => {
-    baseType = "osago";
-    baseOsago.classList.add("active");
-    baseKasko.classList.remove("active");
-    scheduleSave();
-  });
-
-  let kind = "drivers";
+  let kind = "holder";
   const kindDrivers = document.getElementById("kindDrivers");
   const kindHolder = document.getElementById("kindHolder");
   const blockDrivers = document.getElementById("blockDrivers");
@@ -1104,22 +1083,6 @@
       if (data.contractNumber) document.getElementById("d_contractNumber").value = data.contractNumber;
       if (data.contractDate) document.getElementById("d_contractDate").value = ruToIso(data.contractDate);
 
-      // "обязательного страхования гражданской ответственности" (ОСАГО) also turns up inside a
-      // КАСКО polis, quoted as part of a risk clause referencing 40-ФЗ - so a plain КАСКО mention
-      // must win first, and only the absence of it falls back to checking for ОСАГО markers.
-      // Note: \b is an ASCII word-boundary in JS regex and does not recognize Cyrillic
-      // letters as "word" characters, so \bКАСКО\b would silently never match - use a
-      // plain substring/lookaround check instead.
-      if (text.includes("КАСКО") || /Правил\w*\s+комбинированного\s+страхования/i.test(text)) {
-        baseType = "kasko";
-        baseKasko.classList.add("active");
-        baseOsago.classList.remove("active");
-      } else if (/серия\s*ТТТ/i.test(text) || /обязательного страхования гражданской ответственности/i.test(text)) {
-        baseType = "osago";
-        baseOsago.classList.add("active");
-        baseKasko.classList.remove("active");
-      }
-
       const missing = [];
       if (!data.fio) missing.push("ФИО");
       if (!data.passSeries) missing.push("паспорт");
@@ -1154,7 +1117,6 @@
     const signWords = isoToWordsDate(signIso);
     const poaIso = val("d_poaDate");
     return {
-      baseType,
       kind,
       contractNumber: val("d_contractNumber"),
       contractDate: isoToRu(val("d_contractDate")),
@@ -1243,7 +1205,7 @@
           expsince: rowEl.querySelector(".dr-expsince").value,
         });
       });
-      localStorage.setItem("dopnikTool.state", JSON.stringify({ fields, drivers, baseType, kind }));
+      localStorage.setItem("dopnikTool.state", JSON.stringify({ fields, drivers, kind }));
     } catch (e) {
       console.error("Автосохранение не удалось", e);
     }
@@ -1259,12 +1221,7 @@
         if (el) el.value = state.fields[id];
       });
       (state.drivers || []).forEach((row) => addDriverRow(row));
-      if (state.baseType === "osago") {
-        baseType = "osago";
-        baseOsago.classList.add("active");
-        baseKasko.classList.remove("active");
-      }
-      if (state.kind === "holder") setKind("holder");
+      if (state.kind === "drivers") setKind("drivers");
     } catch (e) {
       console.error("Восстановление формы не удалось", e);
     }
