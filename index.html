@@ -37,8 +37,7 @@
     -webkit-font-smoothing: antialiased;
   }
   .page { max-width: 900px; margin: 0 auto; }
-  h1 { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
-  .subtitle { font-size: 13px; color: var(--text-muted); margin: 0 0 18px; }
+  h1 { font-size: 18px; font-weight: 700; margin: 0 0 18px; }
   .card {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -56,17 +55,6 @@
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border-soft);
   }
-  .note {
-    font-size: 12px;
-    color: var(--text-muted);
-    background: var(--warn-bg);
-    border: 1px solid #f0dfa8;
-    border-radius: var(--radius-sm);
-    padding: 8px 10px;
-    margin: -2px 0 14px;
-  }
-  .note b { color: var(--warn); }
-
   /* --- upload dropzone --- */
   .dropzone {
     border: 1.5px dashed #c7cfe0;
@@ -102,9 +90,7 @@
     font-size: 13px;
     color: var(--text-muted);
   }
-  .choice-opt .choice-sub { display: block; font-weight: 400; font-size: 11px; color: var(--text-faint); margin-top: 2px; }
   .choice-opt.active { border-color: var(--primary); background: var(--primary-bg); color: var(--primary-dark); }
-  .choice-opt.active .choice-sub { color: var(--primary-dark); }
 
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
   .grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
@@ -224,28 +210,26 @@
 <div class="page">
 
   <h1>Генератор допников КАСКО</h1>
-  <p class="subtitle">Загрузите PDF действующего полиса КАСКО — тул подтянет данные страхователя и договора. Всё выполняется в браузере, файлы никуда не отправляются.</p>
 
   <div class="card">
     <div class="section-title">Что меняется этим допсоглашением</div>
     <div class="choice-row">
-      <div class="choice-opt active" id="kindHolder" data-kind="holder">Замена собственника / страхователя<span class="choice-sub">ФИО / паспорт / адрес / телефон</span></div>
-      <div class="choice-opt" id="kindDrivers" data-kind="drivers">Замена ВУ и лиц, допущенных к управлению<span class="choice-sub">список водителей с их вод. удостоверениями</span></div>
+      <div class="choice-opt active" id="kindHolder" data-kind="holder">Замена собственника / страхователя</div>
+      <div class="choice-opt" id="kindDrivers" data-kind="drivers">Замена ВУ и лиц, допущенных к управлению</div>
     </div>
   </div>
 
   <div class="card">
-    <div class="section-title">Исходный полис (необязательно, но ускоряет заполнение)</div>
+    <div class="section-title">Исходный полис</div>
     <div class="dropzone" id="dropzone">
       <div><b>Нажмите, чтобы выбрать PDF</b> или перетащите файл сюда</div>
-      <div style="margin-top:4px;">Полис КАСКО — данные страхователя, паспорта, адреса и номера договора подставятся автоматически</div>
     </div>
     <input type="file" id="uploadInput" accept="application/pdf">
     <div class="upload-status" id="uploadStatus"></div>
   </div>
 
   <div class="card">
-    <div class="section-title">Договор, к которому оформляется допсоглашение</div>
+    <div class="section-title">Договор</div>
     <div class="grid">
       <label>Номер договора
         <input id="d_contractNumber" placeholder="26470F5O00049">
@@ -264,7 +248,6 @@
 
   <div class="card">
     <div class="section-title">Страхователь (текущий, по договору)</div>
-    <div class="note">Используется только в преамбуле допника («... и {ФИО}, именуемый в дальнейшем Страхователь ...»). Паспорт/адрес/телефон сюда не входят — их указывайте ниже, в блоке «Новые данные», если они меняются.</div>
     <div class="grid">
       <label class="wide">ФИО
         <input id="d_holderFio" placeholder="Иванов Иван Иванович">
