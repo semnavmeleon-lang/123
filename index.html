@@ -264,24 +264,10 @@
 
   <div class="card">
     <div class="section-title">Страхователь (текущий, по договору)</div>
+    <div class="note">Используется только в преамбуле допника («... и {ФИО}, именуемый в дальнейшем Страхователь ...»). Паспорт/адрес/телефон сюда не входят — их указывайте ниже, в блоке «Новые данные», если они меняются.</div>
     <div class="grid">
       <label class="wide">ФИО
         <input id="d_holderFio" placeholder="Иванов Иван Иванович">
-      </label>
-      <label>Паспорт: серия
-        <input id="d_holderPassSeries" placeholder="0000" maxlength="4">
-      </label>
-      <label>Паспорт: номер
-        <input id="d_holderPassNumber" placeholder="000000" maxlength="6">
-      </label>
-      <label class="wide">Адрес регистрации
-        <input id="d_holderAddress" placeholder="Россия, ...">
-      </label>
-      <label>Дата рождения
-        <input id="d_holderDob" type="date">
-      </label>
-      <label>Телефон
-        <input id="d_holderPhone" placeholder="+7 (___) ___-__-__">
       </label>
     </div>
   </div>
@@ -1075,13 +1061,19 @@
       const data = parseSourcePolicy(text);
 
       if (data.fio) document.getElementById("d_holderFio").value = data.fio;
-      if (data.passSeries) document.getElementById("d_holderPassSeries").value = data.passSeries;
-      if (data.passNumber) document.getElementById("d_holderPassNumber").value = data.passNumber;
-      if (data.address) document.getElementById("d_holderAddress").value = data.address;
-      if (data.dob) document.getElementById("d_holderDob").value = ruToIso(data.dob);
-      if (data.phone) document.getElementById("d_holderPhone").value = data.phone;
       if (data.contractNumber) document.getElementById("d_contractNumber").value = data.contractNumber;
       if (data.contractDate) document.getElementById("d_contractDate").value = ruToIso(data.contractDate);
+
+      // The "текущий страхователь" card only feeds the preamble (ФИО), so passport/address/
+      // phone extracted from the source policy would otherwise be captured and then silently
+      // dropped. Instead, use them to prefill the "Новые данные" (holder-change) fields, since
+      // in practice only one or two details actually change - this way the extracted data is
+      // visibly present in the generated file and the user just edits what changed.
+      if (data.fio) document.getElementById("h_fio").value = data.fio;
+      if (data.passSeries) document.getElementById("h_passSeries").value = data.passSeries;
+      if (data.passNumber) document.getElementById("h_passNumber").value = data.passNumber;
+      if (data.address) document.getElementById("h_address").value = data.address;
+      if (data.phone) document.getElementById("h_phone").value = data.phone;
 
       const missing = [];
       if (!data.fio) missing.push("ФИО");
