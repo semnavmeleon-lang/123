@@ -1,18 +1,23 @@
 window.Tools = window.Tools || {};
 Tools["pdf-to-images"] = (function () {
-  let currentFile = null;
+  let current = null;
   let pdfjsDoc = null;
 
-  async function loadFile(file, els) {
-    currentFile = file;
+  async function loadCurrent(entry, els) {
+    current = entry;
+    if (!entry) {
+      els.options.hidden = true;
+      els.run.disabled = true;
+      Thumbnails.clear(els.thumbs);
+      return;
+    }
     Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      const bytes = await Utils.readFileAsArrayBuffer(file);
-      pdfjsDoc = await Utils.loadPdfJsDocument(bytes);
+      pdfjsDoc = await Pool.getPdfDoc(entry.id);
       await Thumbnails.render(els.thumbs, pdfjsDoc, { targetWidth: 120 });
       els.options.hidden = false;
       els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name} (${pdfjsDoc.numPages} стр.)`, "success");
+      Utils.setStatus(els.status, `Загружено: ${entry.name} (${pdfjsDoc.numPages} стр.)`, "success");
     } catch (err) {
       console.error(err);
       Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
@@ -24,10 +29,9 @@ Tools["pdf-to-images"] = (function () {
     return new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
   }
 
-  async function init() {
+  function init() {
+    const picker = document.getElementById("pdf2img-picker");
     const els = {
-      dropzone: document.querySelector("#panel-pdf-to-images .dropzone"),
-      input: document.getElementById("pdf2img-input"),
       thumbs: document.getElementById("pdf2img-thumbs"),
       options: document.getElementById("pdf2img-options"),
       format: document.getElementById("pdf2img-format"),
@@ -36,8 +40,10 @@ Tools["pdf-to-images"] = (function () {
       status: document.getElementById("pdf2img-status"),
     };
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
     els.run.addEventListener("click", async () => {
@@ -46,7 +52,7 @@ Tools["pdf-to-images"] = (function () {
       const mime = format === "png" ? "image/png" : "image/jpeg";
       const ext = format === "png" ? "png" : "jpg";
       const scale = parseFloat(els.scale.value);
-      const base = Utils.stripExtension(currentFile.name);
+      const base = Utils.stripExtension(current.name);
       try {
         const numPages = pdfjsDoc.numPages;
         const blobs = [];

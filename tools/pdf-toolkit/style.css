@@ -49,6 +49,68 @@ html, body {
 .brand { font-size: 18px; font-weight: 700; margin: 0; }
 .privacy-note { font-size: 12px; color: var(--text-faint); }
 
+.pool-bar {
+  flex-shrink: 0;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 10px 24px;
+  transition: background .12s;
+}
+.pool-bar.dragover { background: var(--primary-bg); }
+.pool-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.pool-bar-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--text-faint); }
+.pool-bar-count { font-size: 12px; color: var(--text-faint); }
+.pool-add-btn {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--primary-dark);
+  background: var(--primary-bg);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.pool-add-btn:hover { background: #ddeafd; }
+.pool-bar-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 110px; overflow-y: auto; }
+.pool-bar-empty { font-size: 12.5px; color: var(--text-faint); }
+
+.pool-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fafbfd;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  font-size: 12px;
+  max-width: 320px;
+}
+.pool-chip-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.pool-chip-badge.pdf { background: var(--primary); }
+.pool-chip-badge.image { background: var(--success); }
+.pool-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; color: var(--text); }
+.pool-chip-meta { color: var(--text-faint); white-space: nowrap; flex-shrink: 0; }
+.pool-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.pool-chip-remove:hover { color: var(--error); }
+
 .body { display: flex; flex: 1; min-height: 0; }
 
 .sidebar {
@@ -99,19 +161,53 @@ html, body {
   padding: 18px 20px;
 }
 
-.dropzone {
+.picker-empty {
   border: 1.5px dashed #c7cfe0;
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: #fafbfd;
+}
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+.picker-row:hover { background: #f4f6fb; }
+.picker-row.selected { background: var(--primary-bg); }
+.picker-row input { flex-shrink: 0; }
+.picker-row-info { display: flex; flex-direction: column; overflow: hidden; }
+.picker-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.picker-row.selected .picker-row-name { color: var(--primary-dark); font-weight: 600; }
+.picker-row-meta { font-size: 11.5px; color: var(--text-faint); }
+
+.picker-add-row {
+  border: 1.5px dashed #c7cfe0;
+  border-radius: var(--radius-md);
+  padding: 10px;
   text-align: center;
   cursor: pointer;
   background: #fafbfd;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
+  transition: background .12s, border-color .12s;
 }
-.dropzone:hover, .dropzone.dragover { background: var(--primary-bg); border-color: var(--primary); }
-.dropzone p { margin: 0; }
-.dropzone .file-info { margin-top: 6px; font-size: 13px; color: var(--text); }
+.picker-add-row:hover, .picker-add-row.dragover { background: var(--primary-bg); border-color: var(--primary); }
 
 .actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 
@@ -186,7 +282,6 @@ html, body {
   position: relative;
 }
 .thumb-card.selected { outline: 2px solid var(--primary); }
-.thumb-card.marked-remove { outline: 2px solid var(--error); opacity: .55; }
 .thumb-card canvas {
   max-width: 100%;
   border-radius: 4px;
@@ -208,18 +303,70 @@ html, body {
 .thumb-card .thumb-controls button:hover { background: var(--primary-bg); color: var(--primary-dark); }
 .thumb-card[draggable="true"] { cursor: grab; }
 .thumb-card.drag-over { outline: 2px dashed var(--primary); }
-.thumb-card .pos-badge {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 6px;
-  border-radius: 999px;
-  font-weight: 600;
+
+.pages-insert-block { margin-top: 14px; }
+.pages-insert-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #fafbfd;
 }
+
+.pages-toolbar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fafbfd;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.pages-toolbar-info { font-size: 12.5px; color: var(--text-muted); font-weight: 600; margin-right: 4px; }
+.pages-toolbar-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
+
+.page-card.selected { outline: 2px solid var(--primary); background: var(--primary-bg); }
+.page-card { cursor: pointer; }
+
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 30, .72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 30px;
+}
+.lightbox-box {
+  position: relative;
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+.lightbox-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #f4f6fb;
+  color: var(--text-muted);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.lightbox-close:hover { background: var(--error-bg); color: var(--error); }
+.lightbox-content { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.lightbox-content canvas, .lightbox-content img { max-width: 100%; max-height: 78vh; border: 1px solid var(--border); border-radius: 4px; }
+.lightbox-caption { font-size: 12.5px; color: var(--text-muted); }
 
 .file-order-list {
   list-style: none;

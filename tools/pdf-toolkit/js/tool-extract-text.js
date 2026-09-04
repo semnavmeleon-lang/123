@@ -1,19 +1,22 @@
 window.Tools = window.Tools || {};
 Tools["extract-text"] = (function () {
-  let currentFile = null;
+  let current = null;
   let pdfjsDoc = null;
   let extractedText = "";
 
-  async function loadFile(file, els) {
-    currentFile = file;
+  async function loadCurrent(entry, els) {
+    current = entry;
     els.output.value = "";
     els.download.disabled = true;
+    if (!entry) {
+      els.run.disabled = true;
+      return;
+    }
     Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      const bytes = await Utils.readFileAsArrayBuffer(file);
-      pdfjsDoc = await Utils.loadPdfJsDocument(bytes);
+      pdfjsDoc = await Pool.getPdfDoc(entry.id);
       els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name} (${pdfjsDoc.numPages} стр.)`, "success");
+      Utils.setStatus(els.status, `Загружено: ${entry.name} (${pdfjsDoc.numPages} стр.)`, "success");
     } catch (err) {
       console.error(err);
       Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
@@ -22,17 +25,18 @@ Tools["extract-text"] = (function () {
   }
 
   function init() {
+    const picker = document.getElementById("exttext-picker");
     const els = {
-      dropzone: document.querySelector("#panel-extract-text .dropzone"),
-      input: document.getElementById("exttext-input"),
       run: document.getElementById("exttext-run"),
       download: document.getElementById("exttext-download"),
       output: document.getElementById("exttext-output"),
       status: document.getElementById("exttext-status"),
     };
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
     els.run.addEventListener("click", async () => {
@@ -62,7 +66,7 @@ Tools["extract-text"] = (function () {
 
     els.download.addEventListener("click", () => {
       const blob = new Blob([extractedText], { type: "text/plain;charset=utf-8" });
-      Utils.downloadBlob(blob, Utils.triggerDownloadName(currentFile.name, "", "txt"));
+      Utils.downloadBlob(blob, Utils.triggerDownloadName(current.name, "", "txt"));
     });
   }
 

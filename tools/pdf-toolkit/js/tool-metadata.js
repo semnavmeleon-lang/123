@@ -1,6 +1,6 @@
 window.Tools = window.Tools || {};
 Tools.metadata = (function () {
-  let currentFile = null;
+  let current = null;
   let pdfDocRef = null;
 
   function fmtDate(d) {
@@ -11,11 +11,16 @@ Tools.metadata = (function () {
     }
   }
 
-  async function loadFile(file, els) {
-    currentFile = file;
+  async function loadCurrent(entry, els) {
+    current = entry;
+    if (!entry) {
+      els.form.hidden = true;
+      els.run.disabled = true;
+      return;
+    }
     Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      const bytes = await Utils.readFileAsArrayBuffer(file);
+      const bytes = await Pool.getBytes(entry.id);
       pdfDocRef = await Utils.loadPdfLibDocument(bytes);
       els.title.value = pdfDocRef.getTitle() || "";
       els.author.value = pdfDocRef.getAuthor() || "";
@@ -31,7 +36,7 @@ Tools.metadata = (function () {
         (modified ? ` · Изменён: ${modified}` : "");
       els.form.hidden = false;
       els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name}`, "success");
+      Utils.setStatus(els.status, `Загружено: ${entry.name}`, "success");
     } catch (err) {
       console.error(err);
       Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
@@ -40,9 +45,8 @@ Tools.metadata = (function () {
   }
 
   function init() {
+    const picker = document.getElementById("meta-picker");
     const els = {
-      dropzone: document.querySelector("#panel-metadata .dropzone"),
-      input: document.getElementById("meta-input"),
       form: document.getElementById("meta-form"),
       title: document.getElementById("meta-title"),
       author: document.getElementById("meta-author"),
@@ -55,8 +59,10 @@ Tools.metadata = (function () {
       status: document.getElementById("meta-status"),
     };
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
     els.run.addEventListener("click", async () => {
@@ -74,7 +80,7 @@ Tools.metadata = (function () {
         const bytes = await pdfDocRef.save();
         Utils.downloadBlob(
           new Blob([bytes], { type: "application/pdf" }),
-          Utils.triggerDownloadName(currentFile.name, "_meta", "pdf")
+          Utils.triggerDownloadName(current.name, "_meta", "pdf")
         );
         Utils.setStatus(els.status, "Готово.", "success");
       } catch (err) {

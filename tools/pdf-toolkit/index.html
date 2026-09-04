@@ -13,14 +13,23 @@
     <div class="privacy-note">Всё работает локально в браузере — файлы никуда не отправляются</div>
   </header>
 
+  <div class="pool-bar">
+    <div class="pool-bar-row">
+      <span class="pool-bar-title">Файлы</span>
+      <span class="pool-bar-count" id="pool-count"></span>
+      <label class="pool-add-btn">
+        + Добавить файлы
+        <input type="file" id="pool-file-input" multiple hidden>
+      </label>
+    </div>
+    <div class="pool-bar-list" id="pool-bar-list"></div>
+  </div>
+
   <div class="body">
     <nav class="sidebar" id="sidebar">
       <button class="nav-item" data-tool="merge">Объединить PDF</button>
       <button class="nav-item" data-tool="split">Разделить PDF</button>
-      <button class="nav-item" data-tool="extract">Извлечь страницы</button>
-      <button class="nav-item" data-tool="delete">Удалить страницы</button>
-      <button class="nav-item" data-tool="reorder">Изменить порядок</button>
-      <button class="nav-item" data-tool="rotate">Повернуть страницы</button>
+      <button class="nav-item" data-tool="pages">Организовать страницы</button>
       <button class="nav-item" data-tool="images-to-pdf">Изображения в PDF</button>
       <button class="nav-item" data-tool="pdf-to-images">PDF в изображения</button>
       <button class="nav-item" data-tool="extract-text">Извлечь текст</button>
@@ -36,12 +45,9 @@
 
       <section class="panel" id="panel-merge" hidden>
         <h1>Объединить PDF</h1>
-        <p class="panel-desc">Загрузите несколько PDF-файлов и объедините их в один в нужном порядке.</p>
+        <p class="panel-desc">Выберите несколько PDF-файлов из пула (или добавьте новые) и объедините их в один в нужном порядке.</p>
         <div class="card">
-          <div class="dropzone" data-input="merge-input">
-            <input type="file" id="merge-input" accept="application/pdf" multiple hidden>
-            <p>Перетащите PDF-файлы сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="merge-picker"></div>
           <ul class="file-order-list" id="merge-list"></ul>
           <div class="actions">
             <button class="btn primary" id="merge-run" disabled>Объединить и скачать</button>
@@ -54,10 +60,7 @@
         <h1>Разделить PDF</h1>
         <p class="panel-desc">Разбейте PDF на отдельные страницы или на несколько файлов по диапазонам.</p>
         <div class="card">
-          <div class="dropzone" data-input="split-input">
-            <input type="file" id="split-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="split-picker"></div>
           <div class="option-row" id="split-options" hidden>
             <label class="radio-option">
               <input type="radio" name="split-mode" value="all" checked>
@@ -77,82 +80,41 @@
         </div>
       </section>
 
-      <section class="panel" id="panel-extract" hidden>
-        <h1>Извлечь страницы</h1>
-        <p class="panel-desc">Выберите страницы, которые нужно оставить, и сохраните их в новый PDF.</p>
+      <section class="panel" id="panel-pages" hidden>
+        <h1>Организовать страницы</h1>
+        <p class="panel-desc">Извлекайте, удаляйте, поворачивайте и переставляйте страницы в одном месте — можно добавить страницы из другого файла пула, как в Adobe Acrobat.</p>
         <div class="card">
-          <div class="dropzone" data-input="extract-input">
-            <input type="file" id="extract-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
-          <div class="option-row" id="extract-options" hidden>
-            <input type="text" id="extract-range" placeholder="Быстрый выбор, например: 1-3,5,8-10">
-            <button class="btn small" id="extract-apply-range">Применить</button>
-            <button class="btn small" id="extract-select-all">Выбрать все</button>
-            <button class="btn small" id="extract-select-none">Снять все</button>
-          </div>
-          <div class="thumb-grid" id="extract-thumbs"></div>
-          <div class="actions">
-            <button class="btn primary" id="extract-run" disabled>Сохранить выбранные страницы</button>
-          </div>
-          <div class="status" id="extract-status"></div>
-        </div>
-      </section>
+          <div id="pages-picker"></div>
 
-      <section class="panel" id="panel-delete" hidden>
-        <h1>Удалить страницы</h1>
-        <p class="panel-desc">Отметьте страницы, которые нужно удалить.</p>
-        <div class="card">
-          <div class="dropzone" data-input="delete-input">
-            <input type="file" id="delete-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
+          <div class="pages-insert-block" id="pages-insert-block" hidden>
+            <button class="btn small" id="pages-insert-toggle">+ Добавить страницы из другого файла</button>
+            <div class="pages-insert-panel" id="pages-insert-panel" hidden>
+              <div id="pages-insert-picker"></div>
+              <div class="actions">
+                <button class="btn small primary" id="pages-insert-confirm">Добавить в конец</button>
+                <button class="btn small" id="pages-insert-cancel">Отмена</button>
+              </div>
+            </div>
           </div>
-          <div class="option-row" id="delete-options" hidden>
-            <input type="text" id="delete-range" placeholder="Быстрый выбор, например: 2,4-6">
-            <button class="btn small" id="delete-apply-range">Применить</button>
-            <button class="btn small" id="delete-select-none">Снять все</button>
-          </div>
-          <div class="thumb-grid" id="delete-thumbs"></div>
-          <div class="actions">
-            <button class="btn primary" id="delete-run" disabled>Удалить отмеченные и скачать</button>
-          </div>
-          <div class="status" id="delete-status"></div>
-        </div>
-      </section>
 
-      <section class="panel" id="panel-reorder" hidden>
-        <h1>Изменить порядок страниц</h1>
-        <p class="panel-desc">Перетащите страницы, чтобы изменить их порядок (или используйте стрелки).</p>
-        <div class="card">
-          <div class="dropzone" data-input="reorder-input">
-            <input type="file" id="reorder-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
+          <div class="pages-toolbar" id="pages-toolbar" hidden>
+            <span class="pages-toolbar-info" id="pages-selection-info"></span>
+            <button class="btn small" id="pages-select-all">Выбрать все</button>
+            <button class="btn small" id="pages-select-none">Снять выбор</button>
+            <span class="pages-toolbar-sep"></span>
+            <button class="btn small" id="pages-rotate-left" disabled>⟲ Повернуть</button>
+            <button class="btn small" id="pages-rotate-right" disabled>⟳ Повернуть</button>
+            <button class="btn small danger" id="pages-delete" disabled>Удалить</button>
+            <button class="btn small" id="pages-extract" disabled>Извлечь как новый PDF</button>
           </div>
-          <div class="thumb-grid" id="reorder-thumbs"></div>
-          <div class="actions">
-            <button class="btn primary" id="reorder-run" disabled>Сохранить новый порядок</button>
-          </div>
-          <div class="status" id="reorder-status"></div>
-        </div>
-      </section>
 
-      <section class="panel" id="panel-rotate" hidden>
-        <h1>Повернуть страницы</h1>
-        <p class="panel-desc">Поворачивайте отдельные страницы или все сразу.</p>
-        <div class="card">
-          <div class="dropzone" data-input="rotate-input">
-            <input type="file" id="rotate-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
-          <div class="option-row" id="rotate-options" hidden>
-            <button class="btn small" id="rotate-all-left">Повернуть все влево</button>
-            <button class="btn small" id="rotate-all-right">Повернуть все вправо</button>
-          </div>
-          <div class="thumb-grid" id="rotate-thumbs"></div>
+          <div class="thumb-grid" id="pages-thumbs"></div>
+
           <div class="actions">
-            <button class="btn primary" id="rotate-run" disabled>Сохранить</button>
+            <button class="btn primary" id="pages-save" disabled>Скачать результат</button>
+            <button class="btn" id="pages-reset" disabled>Сбросить изменения</button>
           </div>
-          <div class="status" id="rotate-status"></div>
+          <div class="status" id="pages-status"></div>
         </div>
       </section>
 
@@ -160,10 +122,7 @@
         <h1>Изображения в PDF</h1>
         <p class="panel-desc">Соберите PDF из изображений (JPG, PNG, WebP). Порядок можно менять перетаскиванием.</p>
         <div class="card">
-          <div class="dropzone" data-input="img2pdf-input">
-            <input type="file" id="img2pdf-input" accept="image/png,image/jpeg,image/webp" multiple hidden>
-            <p>Перетащите изображения сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="img2pdf-picker"></div>
           <div class="option-row" id="img2pdf-options" hidden>
             <label>Размер страницы:
               <select id="img2pdf-pagesize">
@@ -185,10 +144,7 @@
         <h1>PDF в изображения</h1>
         <p class="panel-desc">Экспортируйте страницы PDF как изображения PNG или JPEG.</p>
         <div class="card">
-          <div class="dropzone" data-input="pdf2img-input">
-            <input type="file" id="pdf2img-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="pdf2img-picker"></div>
           <div class="option-row" id="pdf2img-options" hidden>
             <label>Формат:
               <select id="pdf2img-format">
@@ -217,10 +173,7 @@
         <h1>Извлечь текст</h1>
         <p class="panel-desc">Извлеките текстовое содержимое PDF (без OCR — только текстовый слой документа).</p>
         <div class="card">
-          <div class="dropzone" data-input="exttext-input">
-            <input type="file" id="exttext-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="exttext-picker"></div>
           <div class="actions">
             <button class="btn primary" id="exttext-run" disabled>Извлечь текст</button>
             <button class="btn" id="exttext-download" disabled>Скачать .txt</button>
@@ -234,10 +187,7 @@
         <h1>Извлечь изображения</h1>
         <p class="panel-desc">Извлеките встроенные растровые изображения из PDF (без учёта векторной графики).</p>
         <div class="card">
-          <div class="dropzone" data-input="extimg-input">
-            <input type="file" id="extimg-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="extimg-picker"></div>
           <div class="actions">
             <button class="btn primary" id="extimg-run" disabled>Извлечь изображения</button>
             <button class="btn" id="extimg-download-all" disabled>Скачать всё (ZIP)</button>
@@ -249,12 +199,9 @@
 
       <section class="panel" id="panel-watermark" hidden>
         <h1>Водяной знак</h1>
-        <p class="panel-desc">Добавьте текстовый водяной знак на все страницы документа.</p>
+        <p class="panel-desc">Добавьте текстовый водяной знак на все страницы одного или нескольких документов.</p>
         <div class="card">
-          <div class="dropzone" data-input="wm-input">
-            <input type="file" id="wm-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="wm-picker"></div>
           <div class="option-row" id="wm-options" hidden>
             <input type="text" id="wm-text" placeholder="Текст водяного знака" value="CONFIDENTIAL">
             <label>Размер: <input type="number" id="wm-size" value="48" min="6" max="200"></label>
@@ -279,10 +226,7 @@
         <h1>Метаданные</h1>
         <p class="panel-desc">Просмотрите и отредактируйте метаданные документа.</p>
         <div class="card">
-          <div class="dropzone" data-input="meta-input">
-            <input type="file" id="meta-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="meta-picker"></div>
           <div class="meta-form" id="meta-form" hidden>
             <label>Заголовок <input type="text" id="meta-title"></label>
             <label>Автор <input type="text" id="meta-author"></label>
@@ -303,10 +247,7 @@
         <h1>Заполнить форму</h1>
         <p class="panel-desc">Заполните поля интерактивной PDF-формы (AcroForm).</p>
         <div class="card">
-          <div class="dropzone" data-input="forms-input">
-            <input type="file" id="forms-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF-форму сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="forms-picker"></div>
           <div class="forms-fields" id="forms-fields"></div>
           <div class="option-row" id="forms-flatten-row" hidden>
             <label><input type="checkbox" id="forms-flatten"> Сделать поля неизменяемыми (flatten) при сохранении</label>
@@ -320,13 +261,10 @@
 
       <section class="panel" id="panel-protect" hidden>
         <h1>Пароль / защита</h1>
-        <p class="panel-desc">Установите пароль на открытие PDF (RC4 128-бит, стандартный защитный механизм PDF, версия PDF 1.6).
+        <p class="panel-desc">Установите пароль на открытие для одного или нескольких PDF (RC4 128-бит, стандартный защитный механизм PDF).
           Работает только с незашифрованными файлами.</p>
         <div class="card">
-          <div class="dropzone" data-input="protect-input">
-            <input type="file" id="protect-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="protect-picker"></div>
           <div class="option-row" id="protect-options" hidden>
             <label>Пароль для открытия <input type="password" id="protect-user-pass"></label>
             <label>Пароль владельца (необязательно) <input type="password" id="protect-owner-pass"></label>
@@ -343,12 +281,9 @@
 
       <section class="panel" id="panel-compress" hidden>
         <h1>Сжать PDF</h1>
-        <p class="panel-desc">Уменьшите размер файла: пересжатие встроенных JPEG-изображений и оптимизация структуры документа.</p>
+        <p class="panel-desc">Уменьшите размер одного или нескольких файлов: пересжатие встроенных JPEG-изображений и оптимизация структуры документа.</p>
         <div class="card">
-          <div class="dropzone" data-input="compress-input">
-            <input type="file" id="compress-input" accept="application/pdf" hidden>
-            <p>Перетащите PDF сюда или нажмите, чтобы выбрать</p>
-          </div>
+          <div id="compress-picker"></div>
           <div class="option-row" id="compress-options" hidden>
             <label>Качество изображений: <input type="range" id="compress-quality" min="0.1" max="0.95" step="0.05" value="0.6"></label>
             <span id="compress-quality-label">60%</span>
@@ -370,15 +305,16 @@
 <script src="vendor/jszip.min.js"></script>
 <script src="js/pdfjs-setup.js"></script>
 <script src="js/utils.js"></script>
+<script src="js/pool.js"></script>
+<script src="js/pool-ui.js"></script>
+<script src="js/file-picker.js"></script>
+<script src="js/lightbox.js"></script>
 <script src="js/thumbnails.js"></script>
 <script src="js/crypto-rc4.js"></script>
 <script src="js/pdf-encrypt.js"></script>
 <script src="js/tool-merge.js"></script>
 <script src="js/tool-split.js"></script>
-<script src="js/tool-extract.js"></script>
-<script src="js/tool-delete.js"></script>
-<script src="js/tool-reorder.js"></script>
-<script src="js/tool-rotate.js"></script>
+<script src="js/tool-pages.js"></script>
 <script src="js/tool-images-to-pdf.js"></script>
 <script src="js/tool-pdf-to-images.js"></script>
 <script src="js/tool-extract-text.js"></script>

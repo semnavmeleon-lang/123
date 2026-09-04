@@ -1,7 +1,6 @@
 window.Tools = window.Tools || {};
 Tools.compress = (function () {
-  let currentFile = null;
-  let currentBytes = null;
+  let selectedEntries = [];
 
   const SAFE_COLOR_SPACES = ["/DeviceRGB", "/DeviceGray", "/CalRGB", "/CalGray"];
 
@@ -58,25 +57,9 @@ Tools.compress = (function () {
     return { processed, skipped, savedBytes };
   }
 
-  async function loadFile(file, els) {
-    currentFile = file;
-    Utils.setStatus(els.status, "Загрузка...", "info");
-    try {
-      currentBytes = await Utils.readFileAsArrayBuffer(file);
-      els.options.hidden = false;
-      els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name} (${Utils.formatBytes(file.size)})`, "success");
-    } catch (err) {
-      console.error(err);
-      Utils.setStatus(els.status, "Ошибка чтения файла: " + err.message, "error");
-      els.run.disabled = true;
-    }
-  }
-
   function init() {
+    const picker = document.getElementById("compress-picker");
     const els = {
-      dropzone: document.querySelector("#panel-compress .dropzone"),
-      input: document.getElementById("compress-input"),
       options: document.getElementById("compress-options"),
       quality: document.getElementById("compress-quality"),
       qualityLabel: document.getElementById("compress-quality-label"),
@@ -88,38 +71,61 @@ Tools.compress = (function () {
       els.qualityLabel.textContent = Math.round(parseFloat(els.quality.value) * 100) + "%";
     });
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: true,
+      onChange: (selected) => {
+        selectedEntries = selected;
+        els.options.hidden = selected.length === 0;
+        els.run.disabled = selected.length === 0;
+      },
     });
 
     els.run.addEventListener("click", async () => {
+      if (selectedEntries.length === 0) return;
       els.run.disabled = true;
-      Utils.setStatus(els.status, "Сжатие...", "info");
+      const quality = parseFloat(els.quality.value);
       try {
-        const quality = parseFloat(els.quality.value);
-        const pdfDoc = await Utils.loadPdfLibDocument(currentBytes);
-        const { processed, skipped } = await compressImages(pdfDoc, quality, (done, total) => {
-          Utils.setStatus(els.status, `Обработка объектов: ${done} из ${total}...`, "info");
-        });
-        const outBytes = await pdfDoc.save({ useObjectStreams: true });
-        const before = currentBytes.byteLength;
-        const after = outBytes.length;
-        Utils.downloadBlob(
-          new Blob([outBytes], { type: "application/pdf" }),
-          Utils.triggerDownloadName(currentFile.name, "_compressed", "pdf")
-        );
-        const pct = before > 0 ? Math.round((1 - after / before) * 100) : 0;
+        const outputs = [];
+        let totalBefore = 0;
+        let totalAfter = 0;
+        let totalProcessed = 0;
+        let totalSkipped = 0;
+        for (let i = 0; i < selectedEntries.length; i++) {
+          const entry = selectedEntries[i];
+          Utils.setStatus(els.status, `Сжатие ${i + 1} из ${selectedEntries.length}: ${entry.name}...`, "info");
+          const bytes = await Pool.getBytes(entry.id);
+          const pdfDoc = await Utils.loadPdfLibDocument(bytes);
+          const { processed, skipped } = await compressImages(pdfDoc, quality, (done, total) => {
+            Utils.setStatus(els.status, `${entry.name}: объекты ${done} из ${total}...`, "info");
+          });
+          const outBytes = await pdfDoc.save({ useObjectStreams: true });
+          totalBefore += bytes.byteLength;
+          totalAfter += outBytes.length;
+          totalProcessed += processed;
+          totalSkipped += skipped;
+          outputs.push({ name: Utils.triggerDownloadName(entry.name, "_compressed", "pdf"), bytes: outBytes });
+        }
+        if (outputs.length === 1) {
+          Utils.downloadBlob(new Blob([outputs[0].bytes], { type: "application/pdf" }), outputs[0].name);
+        } else {
+          const zip = new JSZip();
+          outputs.forEach((o) => zip.file(o.name, o.bytes));
+          const blob = await zip.generateAsync({ type: "blob" });
+          Utils.downloadBlob(blob, "compressed.zip");
+        }
+        const pct = totalBefore > 0 ? Math.round((1 - totalAfter / totalBefore) * 100) : 0;
         Utils.setStatus(
           els.status,
-          `Готово: ${Utils.formatBytes(before)} → ${Utils.formatBytes(after)} (${pct >= 0 ? "-" : "+"}${Math.abs(pct)}%). ` +
-            `Пересжато изображений: ${processed}, пропущено: ${skipped}.`,
+          `Готово: ${Utils.formatBytes(totalBefore)} → ${Utils.formatBytes(totalAfter)} (${pct >= 0 ? "-" : "+"}${Math.abs(pct)}%). ` +
+            `Пересжато изображений: ${totalProcessed}, пропущено: ${totalSkipped}.`,
           "success"
         );
       } catch (err) {
         console.error(err);
         Utils.setStatus(els.status, "Ошибка: " + err.message, "error");
       } finally {
-        els.run.disabled = false;
+        els.run.disabled = selectedEntries.length === 0;
       }
     });
   }

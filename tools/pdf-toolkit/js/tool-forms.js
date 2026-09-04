@@ -103,13 +103,18 @@ Tools.forms = (function () {
     return null; // push buttons, signature fields: nothing to fill
   }
 
-  async function loadFile(file, els) {
-    currentFile = file;
+  async function loadCurrent(entry, els) {
+    currentFile = entry;
     els.fieldsContainer.innerHTML = "";
     applyFns = [];
+    if (!entry) {
+      els.run.disabled = true;
+      els.flattenRow.hidden = true;
+      return;
+    }
     Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      const bytes = await Utils.readFileAsArrayBuffer(file);
+      const bytes = await Pool.getBytes(entry.id);
       pdfDocRef = await Utils.loadPdfLibDocument(bytes);
       const form = pdfDocRef.getForm();
       const fields = form.getFields();
@@ -128,7 +133,7 @@ Tools.forms = (function () {
       });
       els.flattenRow.hidden = false;
       els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name} (${fields.length} полей)`, "success");
+      Utils.setStatus(els.status, `Загружено: ${entry.name} (${fields.length} полей)`, "success");
     } catch (err) {
       console.error(err);
       Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
@@ -137,9 +142,8 @@ Tools.forms = (function () {
   }
 
   function init() {
+    const picker = document.getElementById("forms-picker");
     const els = {
-      dropzone: document.querySelector("#panel-forms .dropzone"),
-      input: document.getElementById("forms-input"),
       fieldsContainer: document.getElementById("forms-fields"),
       flattenRow: document.getElementById("forms-flatten-row"),
       flatten: document.getElementById("forms-flatten"),
@@ -147,8 +151,10 @@ Tools.forms = (function () {
       status: document.getElementById("forms-status"),
     };
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
     els.run.addEventListener("click", async () => {

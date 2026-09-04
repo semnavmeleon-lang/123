@@ -83,16 +83,6 @@ const Utils = (function () {
     });
   }
 
-  function setDropzoneInfo(dropzoneEl, text) {
-    let info = dropzoneEl.querySelector(".file-info");
-    if (!info) {
-      info = document.createElement("p");
-      info.className = "file-info";
-      dropzoneEl.appendChild(info);
-    }
-    info.textContent = text;
-  }
-
   async function loadPdfJsDocument(arrayBuffer) {
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
     return loadingTask.promise;
@@ -144,7 +134,6 @@ const Utils = (function () {
     parsePageRanges,
     setStatus,
     wireDropzone,
-    setDropzoneInfo,
     loadPdfJsDocument,
     loadPdfLibDocument,
     triggerDownloadName,

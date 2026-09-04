@@ -1,39 +1,44 @@
 window.Tools = window.Tools || {};
 Tools.split = (function () {
-  let currentFile = null;
-  let currentBytes = null;
+  let current = null; // pool entry
   let pageCount = 0;
 
-  async function loadFile(file, statusEl, thumbsEl, optionsEl, runBtn) {
-    currentFile = file;
-    Utils.setStatus(statusEl, "Загрузка...", "info");
+  async function loadCurrent(entry, els) {
+    current = entry;
+    if (!entry) {
+      els.options.hidden = true;
+      els.run.disabled = true;
+      Thumbnails.clear(els.thumbs);
+      return;
+    }
+    Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      currentBytes = await Utils.readFileAsArrayBuffer(file);
-      const pdfjsDoc = await Utils.loadPdfJsDocument(currentBytes);
+      const pdfjsDoc = await Pool.getPdfDoc(entry.id);
       pageCount = pdfjsDoc.numPages;
-      await Thumbnails.render(thumbsEl, pdfjsDoc, { targetWidth: 120 });
-      optionsEl.hidden = false;
-      runBtn.disabled = false;
-      Utils.setStatus(statusEl, `Загружено: ${file.name} (${pageCount} стр.)`, "success");
+      await Thumbnails.render(els.thumbs, pdfjsDoc, { targetWidth: 120 });
+      els.options.hidden = false;
+      els.run.disabled = false;
+      Utils.setStatus(els.status, `Загружено: ${entry.name} (${pageCount} стр.)`, "success");
     } catch (err) {
       console.error(err);
-      Utils.setStatus(statusEl, "Ошибка чтения PDF: " + err.message, "error");
-      runBtn.disabled = true;
+      Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
+      els.run.disabled = true;
     }
   }
 
   async function splitAllPages(statusEl) {
-    const donor = await Utils.loadPdfLibDocument(currentBytes);
+    const bytes = await Pool.getBytes(current.id);
+    const donor = await Utils.loadPdfLibDocument(bytes);
     const zip = new JSZip();
-    const base = Utils.stripExtension(currentFile.name);
+    const base = Utils.stripExtension(current.name);
     const pad = String(pageCount).length;
     for (let i = 0; i < pageCount; i++) {
       const out = await PDFLib.PDFDocument.create();
       const [page] = await out.copyPages(donor, [i]);
       out.addPage(page);
-      const bytes = await out.save();
+      const outBytes = await out.save();
       const num = String(i + 1).padStart(pad, "0");
-      zip.file(`${base}_${num}.pdf`, bytes);
+      zip.file(`${base}_${num}.pdf`, outBytes);
       Utils.setStatus(statusEl, `Обработка страницы ${i + 1} из ${pageCount}...`, "info");
     }
     const blob = await zip.generateAsync({ type: "blob" });
@@ -43,8 +48,9 @@ Tools.split = (function () {
   async function splitByRanges(rangesSpec, statusEl) {
     const groups = rangesSpec.split(";").map((s) => s.trim()).filter(Boolean);
     if (groups.length === 0) throw new Error("Укажите хотя бы один диапазон");
-    const donor = await Utils.loadPdfLibDocument(currentBytes);
-    const base = Utils.stripExtension(currentFile.name);
+    const bytes = await Pool.getBytes(current.id);
+    const donor = await Utils.loadPdfLibDocument(bytes);
+    const base = Utils.stripExtension(current.name);
     const outputs = [];
     for (const group of groups) {
       const indices = Utils.parsePageRanges(group, pageCount);
@@ -64,34 +70,36 @@ Tools.split = (function () {
   }
 
   function init() {
-    const panel = document.getElementById("panel-split");
-    const dropzone = panel.querySelector(".dropzone");
-    const input = document.getElementById("split-input");
-    const thumbsEl = document.getElementById("split-thumbs");
-    const optionsEl = document.getElementById("split-options");
-    const runBtn = document.getElementById("split-run");
-    const statusEl = document.getElementById("split-status");
-    const rangesInput = document.getElementById("split-ranges");
+    const picker = document.getElementById("split-picker");
+    const els = {
+      thumbs: document.getElementById("split-thumbs"),
+      options: document.getElementById("split-options"),
+      run: document.getElementById("split-run"),
+      status: document.getElementById("split-status"),
+      rangesInput: document.getElementById("split-ranges"),
+    };
 
-    Utils.wireDropzone(dropzone, input, (files) => {
-      if (files[0]) loadFile(files[0], statusEl, thumbsEl, optionsEl, runBtn);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
-    runBtn.addEventListener("click", async () => {
-      const mode = panel.querySelector('input[name="split-mode"]:checked').value;
-      runBtn.disabled = true;
+    els.run.addEventListener("click", async () => {
+      const mode = document.querySelector('input[name="split-mode"]:checked').value;
+      els.run.disabled = true;
       try {
         if (mode === "all") {
-          await splitAllPages(statusEl);
+          await splitAllPages(els.status);
         } else {
-          await splitByRanges(rangesInput.value, statusEl);
+          await splitByRanges(els.rangesInput.value, els.status);
         }
-        Utils.setStatus(statusEl, "Готово.", "success");
+        Utils.setStatus(els.status, "Готово.", "success");
       } catch (err) {
         console.error(err);
-        Utils.setStatus(statusEl, "Ошибка: " + err.message, "error");
+        Utils.setStatus(els.status, "Ошибка: " + err.message, "error");
       } finally {
-        runBtn.disabled = false;
+        els.run.disabled = false;
       }
     });
   }

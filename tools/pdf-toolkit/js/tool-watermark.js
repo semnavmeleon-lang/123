@@ -1,7 +1,6 @@
 window.Tools = window.Tools || {};
 Tools.watermark = (function () {
-  let currentFile = null;
-  let currentBytes = null;
+  let selectedEntries = [];
 
   function hexToRgb(hex) {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -23,25 +22,38 @@ Tools.watermark = (function () {
     };
   }
 
-  async function loadFile(file, els) {
-    currentFile = file;
-    Utils.setStatus(els.status, "Загрузка...", "info");
-    try {
-      currentBytes = await Utils.readFileAsArrayBuffer(file);
-      els.options.hidden = false;
-      els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name}`, "success");
-    } catch (err) {
-      console.error(err);
-      Utils.setStatus(els.status, "Ошибка чтения файла: " + err.message, "error");
-      els.run.disabled = true;
+  async function applyWatermark(bytes, opts) {
+    const pdfDoc = await Utils.loadPdfLibDocument(bytes);
+    const font = await Utils.embedUnicodeFont(pdfDoc);
+    const width = font.widthOfTextAtSize(opts.text, opts.size);
+    const height = font.heightAtSize(opts.size);
+
+    for (const page of pdfDoc.getPages()) {
+      const { width: pw, height: ph } = page.getSize();
+      if (opts.position === "center") {
+        const { x, y } = rotatedAnchor(pw / 2, ph / 2, -width / 2, -height / 2, opts.angle);
+        page.drawText(opts.text, { x, y, size: opts.size, font, color: opts.color, opacity: opts.opacity, rotate: PDFLib.degrees(opts.angle) });
+      } else {
+        const spacingX = width * 1.8 + 40;
+        const spacingY = height * 4 + 40;
+        const cols = Math.ceil(pw / spacingX) + 2;
+        const rows = Math.ceil(ph / spacingY) + 2;
+        for (let ri = -1; ri < rows; ri++) {
+          for (let ci = -1; ci < cols; ci++) {
+            const cx = ci * spacingX;
+            const cy = ri * spacingY;
+            const { x, y } = rotatedAnchor(cx, cy, -width / 2, -height / 2, opts.angle);
+            page.drawText(opts.text, { x, y, size: opts.size, font, color: opts.color, opacity: opts.opacity, rotate: PDFLib.degrees(opts.angle) });
+          }
+        }
+      }
     }
+    return pdfDoc.save();
   }
 
   function init() {
+    const picker = document.getElementById("wm-picker");
     const els = {
-      dropzone: document.querySelector("#panel-watermark .dropzone"),
-      input: document.getElementById("wm-input"),
       options: document.getElementById("wm-options"),
       text: document.getElementById("wm-text"),
       size: document.getElementById("wm-size"),
@@ -53,8 +65,14 @@ Tools.watermark = (function () {
       status: document.getElementById("wm-status"),
     };
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: true,
+      onChange: (selected) => {
+        selectedEntries = selected;
+        els.options.hidden = selected.length === 0;
+        els.run.disabled = selected.length === 0;
+      },
     });
 
     els.run.addEventListener("click", async () => {
@@ -63,52 +81,42 @@ Tools.watermark = (function () {
         Utils.setStatus(els.status, "Введите текст водяного знака.", "error");
         return;
       }
+      if (selectedEntries.length === 0) return;
       els.run.disabled = true;
-      Utils.setStatus(els.status, "Наложение водяного знака...", "info");
+      const opts = {
+        text,
+        size: parseFloat(els.size.value) || 48,
+        opacity: parseFloat(els.opacity.value),
+        angle: parseFloat(els.rotation.value) || 0,
+        color: (() => {
+          const { r, g, b } = hexToRgb(els.color.value);
+          return PDFLib.rgb(r, g, b);
+        })(),
+        position: els.position.value,
+      };
       try {
-        const pdfDoc = await Utils.loadPdfLibDocument(currentBytes);
-        const font = await Utils.embedUnicodeFont(pdfDoc);
-        const size = parseFloat(els.size.value) || 48;
-        const opacity = parseFloat(els.opacity.value);
-        const angle = parseFloat(els.rotation.value) || 0;
-        const { r, g, b } = hexToRgb(els.color.value);
-        const color = PDFLib.rgb(r, g, b);
-        const width = font.widthOfTextAtSize(text, size);
-        const height = font.heightAtSize(size);
-        const position = els.position.value;
-
-        for (const page of pdfDoc.getPages()) {
-          const { width: pw, height: ph } = page.getSize();
-          if (position === "center") {
-            const { x, y } = rotatedAnchor(pw / 2, ph / 2, -width / 2, -height / 2, angle);
-            page.drawText(text, { x, y, size, font, color, opacity, rotate: PDFLib.degrees(angle) });
-          } else {
-            const spacingX = width * 1.8 + 40;
-            const spacingY = height * 4 + 40;
-            const cols = Math.ceil(pw / spacingX) + 2;
-            const rows = Math.ceil(ph / spacingY) + 2;
-            for (let ri = -1; ri < rows; ri++) {
-              for (let ci = -1; ci < cols; ci++) {
-                const cx = ci * spacingX;
-                const cy = ri * spacingY;
-                const { x, y } = rotatedAnchor(cx, cy, -width / 2, -height / 2, angle);
-                page.drawText(text, { x, y, size, font, color, opacity, rotate: PDFLib.degrees(angle) });
-              }
-            }
-          }
+        const outputs = [];
+        for (let i = 0; i < selectedEntries.length; i++) {
+          const entry = selectedEntries[i];
+          Utils.setStatus(els.status, `Обработка ${i + 1} из ${selectedEntries.length}: ${entry.name}...`, "info");
+          const bytes = await Pool.getBytes(entry.id);
+          const outBytes = await applyWatermark(bytes, opts);
+          outputs.push({ name: Utils.triggerDownloadName(entry.name, "_watermarked", "pdf"), bytes: outBytes });
         }
-
-        const bytes = await pdfDoc.save();
-        Utils.downloadBlob(
-          new Blob([bytes], { type: "application/pdf" }),
-          Utils.triggerDownloadName(currentFile.name, "_watermarked", "pdf")
-        );
-        Utils.setStatus(els.status, "Готово.", "success");
+        if (outputs.length === 1) {
+          Utils.downloadBlob(new Blob([outputs[0].bytes], { type: "application/pdf" }), outputs[0].name);
+        } else {
+          const zip = new JSZip();
+          outputs.forEach((o) => zip.file(o.name, o.bytes));
+          const blob = await zip.generateAsync({ type: "blob" });
+          Utils.downloadBlob(blob, "watermarked.zip");
+        }
+        Utils.setStatus(els.status, `Готово: обработано файлов — ${outputs.length}.`, "success");
       } catch (err) {
         console.error(err);
         Utils.setStatus(els.status, "Ошибка: " + err.message, "error");
       } finally {
-        els.run.disabled = false;
+        els.run.disabled = selectedEntries.length === 0;
       }
     });
   }

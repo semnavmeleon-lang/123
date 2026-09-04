@@ -1,17 +1,20 @@
 window.Tools = window.Tools || {};
 Tools["extract-images"] = (function () {
-  let currentFile = null;
+  let current = null;
   let pdfjsDoc = null;
 
-  async function loadFile(file, els) {
-    currentFile = file;
+  async function loadCurrent(entry, els) {
+    current = entry;
     els.results.innerHTML = "";
+    if (!entry) {
+      els.run.disabled = true;
+      return;
+    }
     Utils.setStatus(els.status, "Загрузка...", "info");
     try {
-      const bytes = await Utils.readFileAsArrayBuffer(file);
-      pdfjsDoc = await Utils.loadPdfJsDocument(bytes);
+      pdfjsDoc = await Pool.getPdfDoc(entry.id);
       els.run.disabled = false;
-      Utils.setStatus(els.status, `Загружено: ${file.name} (${pdfjsDoc.numPages} стр.)`, "success");
+      Utils.setStatus(els.status, `Загружено: ${entry.name} (${pdfjsDoc.numPages} стр.)`, "success");
     } catch (err) {
       console.error(err);
       Utils.setStatus(els.status, "Ошибка чтения PDF: " + err.message, "error");
@@ -151,9 +154,8 @@ Tools["extract-images"] = (function () {
   }
 
   function init() {
+    const picker = document.getElementById("extimg-picker");
     const els = {
-      dropzone: document.querySelector("#panel-extract-images .dropzone"),
-      input: document.getElementById("extimg-input"),
       run: document.getElementById("extimg-run"),
       downloadAll: document.getElementById("extimg-download-all"),
       results: document.getElementById("extimg-results"),
@@ -161,8 +163,10 @@ Tools["extract-images"] = (function () {
     };
     let lastImages = [];
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      if (files[0]) loadFile(files[0], els);
+    FilePicker.mount(picker, {
+      accept: "pdf",
+      multi: false,
+      onChange: (selected) => loadCurrent(selected[0] || null, els),
     });
 
     els.run.addEventListener("click", async () => {
@@ -198,7 +202,7 @@ Tools["extract-images"] = (function () {
       const zip = new JSZip();
       lastImages.forEach((img) => zip.file(`image_p${img.page}_${img.index}.png`, img.blob));
       const blob = await zip.generateAsync({ type: "blob" });
-      Utils.downloadBlob(blob, Utils.triggerDownloadName(currentFile.name, "_images", "zip"));
+      Utils.downloadBlob(blob, Utils.triggerDownloadName(current.name, "_images", "zip"));
     });
   }
 

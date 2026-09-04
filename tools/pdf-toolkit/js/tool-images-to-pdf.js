@@ -1,55 +1,58 @@
 window.Tools = window.Tools || {};
 Tools["images-to-pdf"] = (function () {
-  let items = []; // { file, objectUrl, wrapper }
+  let order = []; // pool entries, in page order
   let draggedItem = null;
   let containerEl = null;
+  const objectUrls = new Map();
 
   const PAGE_SIZES = {
     a4: [595.28, 841.89],
     letter: [612, 792],
   };
 
+  function objectUrlFor(entry) {
+    if (!objectUrls.has(entry.id)) objectUrls.set(entry.id, URL.createObjectURL(entry.file));
+    return objectUrls.get(entry.id);
+  }
+
+  function syncOrder(selectedEntries) {
+    const selectedIds = new Set(selectedEntries.map((e) => e.id));
+    order = order.filter((e) => selectedIds.has(e.id));
+    const known = new Set(order.map((e) => e.id));
+    selectedEntries.forEach((e) => {
+      if (!known.has(e.id)) order.push(e);
+    });
+  }
+
   function applyDomOrder() {
-    items.forEach((item) => containerEl.appendChild(item.wrapper));
+    order.forEach((entry) => containerEl.appendChild(entry._wrapper));
   }
 
   function moveItem(fromPos, toPos) {
-    const [item] = items.splice(fromPos, 1);
-    items.splice(toPos, 0, item);
+    const [entry] = order.splice(fromPos, 1);
+    order.splice(toPos, 0, entry);
     applyDomOrder();
   }
 
-  function buildCard(item) {
+  function buildCard(entry) {
     const wrapper = document.createElement("div");
     wrapper.className = "thumb-card";
     wrapper.draggable = true;
 
     const img = document.createElement("img");
-    img.src = item.objectUrl;
+    img.src = objectUrlFor(entry);
     img.style.maxHeight = "150px";
     wrapper.appendChild(img);
 
     const label = document.createElement("div");
     label.className = "thumb-label";
-    label.textContent = item.file.name;
+    label.textContent = entry.name;
     wrapper.appendChild(label);
 
-    const controls = document.createElement("div");
-    controls.className = "thumb-controls";
-    const removeBtn = document.createElement("button");
-    removeBtn.textContent = "✕ Убрать";
-    removeBtn.addEventListener("click", () => {
-      items = items.filter((it) => it !== item);
-      wrapper.remove();
-      onListChanged();
-    });
-    controls.appendChild(removeBtn);
-    wrapper.appendChild(controls);
-
     wrapper.addEventListener("dragstart", (e) => {
-      draggedItem = item;
+      draggedItem = entry;
       e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", item.file.name);
+      e.dataTransfer.setData("text/plain", entry.name);
     });
     wrapper.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -59,18 +62,18 @@ Tools["images-to-pdf"] = (function () {
     wrapper.addEventListener("drop", (e) => {
       e.preventDefault();
       wrapper.classList.remove("drag-over");
-      if (!draggedItem || draggedItem === item) return;
-      moveItem(items.indexOf(draggedItem), items.indexOf(item));
+      if (!draggedItem || draggedItem === entry) return;
+      moveItem(order.indexOf(draggedItem), order.indexOf(entry));
       draggedItem = null;
     });
 
-    item.wrapper = wrapper;
+    entry._wrapper = wrapper;
     return wrapper;
   }
 
-  let onListChangedCb = () => {};
-  function onListChanged() {
-    onListChangedCb();
+  function renderThumbs() {
+    containerEl.innerHTML = "";
+    order.forEach((entry) => containerEl.appendChild(buildCard(entry)));
   }
 
   async function toPngBytes(file) {
@@ -86,58 +89,42 @@ Tools["images-to-pdf"] = (function () {
   async function embedImage(pdfDoc, file) {
     const type = file.type;
     if (type === "image/jpeg" || type === "image/jpg") {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      return pdfDoc.embedJpg(bytes);
+      return pdfDoc.embedJpg(new Uint8Array(await file.arrayBuffer()));
     }
     if (type === "image/png") {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      return pdfDoc.embedPng(bytes);
+      return pdfDoc.embedPng(new Uint8Array(await file.arrayBuffer()));
     }
-    // Fallback (e.g. WebP, GIF, BMP): re-encode as PNG via canvas.
-    const pngBytes = await toPngBytes(file);
-    return pdfDoc.embedPng(pngBytes);
+    return pdfDoc.embedPng(await toPngBytes(file));
   }
 
   function init() {
-    const els = {
-      dropzone: document.querySelector("#panel-images-to-pdf .dropzone"),
-      input: document.getElementById("img2pdf-input"),
-      thumbs: document.getElementById("img2pdf-thumbs"),
-      options: document.getElementById("img2pdf-options"),
-      pageSize: document.getElementById("img2pdf-pagesize"),
-      run: document.getElementById("img2pdf-run"),
-      status: document.getElementById("img2pdf-status"),
-    };
-    containerEl = els.thumbs;
-    onListChangedCb = () => {
-      const has = items.length > 0;
-      els.options.hidden = !has;
-      els.run.disabled = !has;
-    };
+    const picker = document.getElementById("img2pdf-picker");
+    containerEl = document.getElementById("img2pdf-thumbs");
+    const options = document.getElementById("img2pdf-options");
+    const pageSize = document.getElementById("img2pdf-pagesize");
+    const runBtn = document.getElementById("img2pdf-run");
+    const statusEl = document.getElementById("img2pdf-status");
 
-    Utils.wireDropzone(els.dropzone, els.input, (files) => {
-      const imgFiles = files.filter((f) => f.type.startsWith("image/"));
-      if (imgFiles.length === 0) {
-        Utils.setStatus(els.status, "Выберите файлы изображений (JPG, PNG, WebP).", "error");
-        return;
-      }
-      for (const file of imgFiles) {
-        const item = { file, objectUrl: URL.createObjectURL(file) };
-        items.push(item);
-        els.thumbs.appendChild(buildCard(item));
-      }
-      Utils.setStatus(els.status, "", "");
-      onListChanged();
+    FilePicker.mount(picker, {
+      accept: "image",
+      multi: true,
+      onChange: (selected) => {
+        syncOrder(selected);
+        renderThumbs();
+        const has = order.length > 0;
+        options.hidden = !has;
+        runBtn.disabled = !has;
+      },
     });
 
-    els.run.addEventListener("click", async () => {
-      els.run.disabled = true;
-      Utils.setStatus(els.status, "Создание PDF...", "info");
+    runBtn.addEventListener("click", async () => {
+      runBtn.disabled = true;
+      Utils.setStatus(statusEl, "Создание PDF...", "info");
       try {
         const pdfDoc = await PDFLib.PDFDocument.create();
-        const pageSizeMode = els.pageSize.value;
-        for (const item of items) {
-          const embedded = await embedImage(pdfDoc, item.file);
+        const pageSizeMode = pageSize.value;
+        for (const entry of order) {
+          const embedded = await embedImage(pdfDoc, entry.file);
           if (pageSizeMode === "fit") {
             const page = pdfDoc.addPage([embedded.width, embedded.height]);
             page.drawImage(embedded, { x: 0, y: 0, width: embedded.width, height: embedded.height });
@@ -152,12 +139,12 @@ Tools["images-to-pdf"] = (function () {
         }
         const bytes = await pdfDoc.save();
         Utils.downloadBlob(new Blob([bytes], { type: "application/pdf" }), "images.pdf");
-        Utils.setStatus(els.status, `Готово: создан PDF из ${items.length} изображений.`, "success");
+        Utils.setStatus(statusEl, `Готово: создан PDF из ${order.length} изображений.`, "success");
       } catch (err) {
         console.error(err);
-        Utils.setStatus(els.status, "Ошибка: " + err.message, "error");
+        Utils.setStatus(statusEl, "Ошибка: " + err.message, "error");
       } finally {
-        els.run.disabled = items.length === 0;
+        runBtn.disabled = order.length === 0;
       }
     });
   }
