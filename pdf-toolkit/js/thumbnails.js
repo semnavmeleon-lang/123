@@ -1,14 +1,6 @@
 const Thumbnails = (function () {
-  /**
-   * Renders every page of a pdf.js document as a thumbnail card:
-   *   <div class="thumb-card" data-index="N">
-   *     <canvas>...</canvas>
-   *     <div class="thumb-label">Стр. N+1</div>
-   *   </div>
-   * Returns an array of card descriptors: { index, wrapper, canvas, label, page, rotation }.
-   * opts.onCardBuilt(card) is called after each card is appended, so callers
-   * can attach checkboxes / buttons / drag handles specific to their tool.
-   */
+  // Renders every page as a .thumb-card; opts.onCardBuilt(card) lets callers
+  // attach checkboxes / buttons / drag handles specific to their tool.
   async function render(containerEl, pdfjsDoc, opts) {
     opts = opts || {};
     const targetWidth = opts.targetWidth || 130;

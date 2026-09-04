@@ -21,7 +21,6 @@
     btn.addEventListener("click", () => showTool(btn.dataset.tool));
   });
 
-  // Initialize every tool module once at startup.
   Object.keys(window.Tools || {}).forEach((name) => {
     try {
       window.Tools[name].init();

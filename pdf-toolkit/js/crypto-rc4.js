@@ -1,12 +1,5 @@
-/**
- * Minimal implementation of the PDF "Standard Security Handler" (RC4,
- * revision 3 / 128-bit key, as used by /V 2 /R 3, compatible with PDF 1.4+
- * readers). Implements just enough of MD5 + RC4 + the key derivation
- * algorithms from ISO 32000-1 Annex/Chapter 7.6 to encrypt a PDF that
- * pdf-lib has already fully serialized (see tool-protect.js).
- */
+// PDF Standard Security Handler (RC4, /V 2 /R 3) — MD5 + RC4 + key derivation per ISO 32000-1 7.6.
 const RC4Crypto = (function () {
-  // ---- MD5 (RFC 1321) ----
   const MD5_K = [
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
     0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
@@ -86,7 +79,6 @@ const RC4Crypto = (function () {
     return out;
   }
 
-  // ---- RC4 ----
   function rc4(key, data) {
     const S = new Uint8Array(256);
     for (let i = 0; i < 256; i++) S[i] = i;
@@ -111,7 +103,6 @@ const RC4Crypto = (function () {
     return out;
   }
 
-  // ---- PDF standard security handler helpers (ISO 32000-1, 7.6.3) ----
   const PADDING = new Uint8Array([
     0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41,
     0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08,

@@ -1,20 +1,8 @@
-/**
- * Applies RC4-128 (/V 2 /R 3) standard-security-handler encryption to a
- * pdf-lib PDFDocument's low-level object graph, in place, so that a
- * subsequent `pdfDoc.save({ useObjectStreams: false })` produces a properly
- * password-protected PDF.
- *
- * pdf-lib itself has no encryption support (it can only detect and refuse
- * to load already-encrypted files) — this walks pdf-lib's own PDFContext
- * (the same object graph `save()` will serialize) and encrypts every
- * string/stream belonging to a pre-existing indirect object, then adds a
- * fresh /Encrypt dictionary + /ID before the caller calls `save()`.
- *
- * `useObjectStreams: false` is required: it forces every object to stay a
- * plain top-level indirect object (classic xref table) instead of being
- * packed into a compressed /ObjStm container, which is what makes
- * "one key per indirect object number" (ISO 32000-1 Algorithm 3.1) valid.
- */
+// pdf-lib has no encryption support, so this walks its low-level PDFContext,
+// RC4-encrypts every string/stream on each pre-existing indirect object, then
+// adds a fresh /Encrypt dict + /ID before the caller calls
+// `pdfDoc.save({ useObjectStreams: false })` — object streams must stay off so
+// every object keeps its own number for the per-object key (Algorithm 3.1).
 function bytesToHex(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");
@@ -81,12 +69,6 @@ function getOrCreateFileId(context) {
   return randomBytes;
 }
 
-/**
- * @param pdfDoc pdf-lib PDFDocument (freshly loaded, not yet saved)
- * @param opts.userPassword string - required to open the document (may be "")
- * @param opts.ownerPassword string - required to change permissions (falls back to userPassword if empty)
- * @param opts.permissions {print, copy, modify} booleans
- */
 function encryptPdfDocument(pdfDoc, opts) {
   const context = pdfDoc.context;
   const { PDFName } = PDFLib;
