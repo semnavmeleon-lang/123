@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Утилита</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <h1 class="brand">PDF Утилита</h1>
+    <div class="privacy-note">Всё работает локально в браузере — файлы никуда не отправляются</div>
+  </header>
+
+  <div class="pool-bar">
+    <div class="pool-bar-row">
+      <span class="pool-bar-title">Файлы</span>
+      <span class="pool-bar-count" id="pool-count"></span>
+      <label class="pool-add-btn">
+        + Добавить файлы
+        <input type="file" id="pool-file-input" multiple hidden>
+      </label>
+    </div>
+    <div class="pool-bar-list" id="pool-bar-list"></div>
+  </div>
+
+  <div class="body">
+    <nav class="sidebar" id="sidebar">
+      <button class="nav-item" data-tool="merge">Объединить PDF</button>
+      <button class="nav-item" data-tool="split">Разделить PDF</button>
+      <button class="nav-item" data-tool="pages">Организовать страницы</button>
+      <button class="nav-item" data-tool="images-to-pdf">Изображения в PDF</button>
+      <button class="nav-item" data-tool="pdf-to-images">PDF в изображения</button>
+      <button class="nav-item" data-tool="extract-text">Извлечь текст</button>
+      <button class="nav-item" data-tool="extract-images">Извлечь изображения</button>
+      <button class="nav-item" data-tool="watermark">Водяной знак</button>
+      <button class="nav-item" data-tool="metadata">Метаданные</button>
+      <button class="nav-item" data-tool="forms">Заполнить форму</button>
+      <button class="nav-item" data-tool="protect">Пароль / защита</button>
+      <button class="nav-item" data-tool="compress">Сжать PDF</button>
+    </nav>
+
+    <main class="content" id="content">
+
+      <section class="panel" id="panel-merge" hidden>
+        <h1>Объединить PDF</h1>
+        <p class="panel-desc">Выберите несколько PDF-файлов из пула (или добавьте новые) и объедините их в один в нужном порядке.</p>
+        <div class="card">
+          <div id="merge-picker"></div>
+          <ul class="file-order-list" id="merge-list"></ul>
+          <div class="actions">
+            <button class="btn primary" id="merge-run" disabled>Объединить и скачать</button>
+          </div>
+          <div class="status" id="merge-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-split" hidden>
+        <h1>Разделить PDF</h1>
+        <p class="panel-desc">Разбейте PDF на отдельные страницы или на несколько файлов по диапазонам.</p>
+        <div class="card">
+          <div id="split-picker"></div>
+          <div class="option-row" id="split-options" hidden>
+            <label class="radio-option">
+              <input type="radio" name="split-mode" value="all" checked>
+              Каждая страница — отдельный файл (ZIP)
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="split-mode" value="ranges">
+              По диапазонам:
+              <input type="text" id="split-ranges" placeholder="например: 1-2;3-5;6">
+            </label>
+          </div>
+          <div class="thumb-grid" id="split-thumbs"></div>
+          <div class="actions">
+            <button class="btn primary" id="split-run" disabled>Разделить и скачать</button>
+          </div>
+          <div class="status" id="split-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-pages" hidden>
+        <h1>Организовать страницы</h1>
+        <p class="panel-desc">Извлекайте, удаляйте, поворачивайте и переставляйте страницы в одном месте — можно добавить страницы из другого файла пула, как в Adobe Acrobat.</p>
+        <div class="card">
+          <div id="pages-picker"></div>
+
+          <div class="pages-insert-block" id="pages-insert-block" hidden>
+            <button class="btn small" id="pages-insert-toggle">+ Добавить страницы из другого файла</button>
+            <div class="pages-insert-panel" id="pages-insert-panel" hidden>
+              <div id="pages-insert-picker"></div>
+              <div class="actions">
+                <button class="btn small primary" id="pages-insert-confirm">Добавить в конец</button>
+                <button class="btn small" id="pages-insert-cancel">Отмена</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="pages-toolbar" id="pages-toolbar" hidden>
+            <span class="pages-toolbar-info" id="pages-selection-info"></span>
+            <button class="btn small" id="pages-select-all">Выбрать все</button>
+            <button class="btn small" id="pages-select-none">Снять выбор</button>
+            <span class="pages-toolbar-sep"></span>
+            <button class="btn small" id="pages-rotate-left" disabled>⟲ Повернуть</button>
+            <button class="btn small" id="pages-rotate-right" disabled>⟳ Повернуть</button>
+            <button class="btn small danger" id="pages-delete" disabled>Удалить</button>
+            <button class="btn small" id="pages-extract" disabled>Извлечь как новый PDF</button>
+          </div>
+
+          <div class="thumb-grid" id="pages-thumbs"></div>
+
+          <div class="actions">
+            <button class="btn primary" id="pages-save" disabled>Скачать результат</button>
+            <button class="btn" id="pages-reset" disabled>Сбросить изменения</button>
+          </div>
+          <div class="status" id="pages-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-images-to-pdf" hidden>
+        <h1>Изображения в PDF</h1>
+        <p class="panel-desc">Соберите PDF из изображений (JPG, PNG, WebP). Порядок можно менять перетаскиванием.</p>
+        <div class="card">
+          <div id="img2pdf-picker"></div>
+          <div class="option-row" id="img2pdf-options" hidden>
+            <label>Размер страницы:
+              <select id="img2pdf-pagesize">
+                <option value="fit">По размеру изображения</option>
+                <option value="a4">A4</option>
+                <option value="letter">Letter</option>
+              </select>
+            </label>
+          </div>
+          <div class="thumb-grid" id="img2pdf-thumbs"></div>
+          <div class="actions">
+            <button class="btn primary" id="img2pdf-run" disabled>Создать PDF</button>
+          </div>
+          <div class="status" id="img2pdf-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-pdf-to-images" hidden>
+        <h1>PDF в изображения</h1>
+        <p class="panel-desc">Экспортируйте страницы PDF как изображения PNG или JPEG.</p>
+        <div class="card">
+          <div id="pdf2img-picker"></div>
+          <div class="option-row" id="pdf2img-options" hidden>
+            <label>Формат:
+              <select id="pdf2img-format">
+                <option value="png">PNG</option>
+                <option value="jpeg">JPEG</option>
+              </select>
+            </label>
+            <label>Масштаб:
+              <select id="pdf2img-scale">
+                <option value="1">1x</option>
+                <option value="2" selected>2x</option>
+                <option value="3">3x</option>
+                <option value="4">4x (высокое качество)</option>
+              </select>
+            </label>
+          </div>
+          <div class="thumb-grid" id="pdf2img-thumbs"></div>
+          <div class="actions">
+            <button class="btn primary" id="pdf2img-run" disabled>Экспортировать</button>
+          </div>
+          <div class="status" id="pdf2img-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-extract-text" hidden>
+        <h1>Извлечь текст</h1>
+        <p class="panel-desc">Извлеките текстовое содержимое PDF (без OCR — только текстовый слой документа).</p>
+        <div class="card">
+          <div id="exttext-picker"></div>
+          <div class="actions">
+            <button class="btn primary" id="exttext-run" disabled>Извлечь текст</button>
+            <button class="btn" id="exttext-download" disabled>Скачать .txt</button>
+          </div>
+          <textarea class="text-output" id="exttext-output" placeholder="Извлечённый текст появится здесь..." readonly></textarea>
+          <div class="status" id="exttext-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-extract-images" hidden>
+        <h1>Извлечь изображения</h1>
+        <p class="panel-desc">Извлеките встроенные растровые изображения из PDF (без учёта векторной графики).</p>
+        <div class="card">
+          <div id="extimg-picker"></div>
+          <div class="actions">
+            <button class="btn primary" id="extimg-run" disabled>Извлечь изображения</button>
+            <button class="btn" id="extimg-download-all" disabled>Скачать всё (ZIP)</button>
+          </div>
+          <div class="thumb-grid" id="extimg-results"></div>
+          <div class="status" id="extimg-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-watermark" hidden>
+        <h1>Водяной знак</h1>
+        <p class="panel-desc">Добавьте текстовый водяной знак на все страницы одного или нескольких документов.</p>
+        <div class="card">
+          <div id="wm-picker"></div>
+          <div class="option-row" id="wm-options" hidden>
+            <input type="text" id="wm-text" placeholder="Текст водяного знака" value="CONFIDENTIAL">
+            <label>Размер: <input type="number" id="wm-size" value="48" min="6" max="200"></label>
+            <label>Прозрачность: <input type="range" id="wm-opacity" min="0.05" max="1" step="0.05" value="0.3"></label>
+            <label>Угол: <input type="number" id="wm-rotation" value="45" min="-180" max="180"></label>
+            <label>Цвет: <input type="color" id="wm-color" value="#ff0000"></label>
+            <label>Положение:
+              <select id="wm-position">
+                <option value="center" selected>По центру</option>
+                <option value="tile">Мозаикой</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="wm-run" disabled>Наложить и скачать</button>
+          </div>
+          <div class="status" id="wm-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-metadata" hidden>
+        <h1>Метаданные</h1>
+        <p class="panel-desc">Просмотрите и отредактируйте метаданные документа.</p>
+        <div class="card">
+          <div id="meta-picker"></div>
+          <div class="meta-form" id="meta-form" hidden>
+            <label>Заголовок <input type="text" id="meta-title"></label>
+            <label>Автор <input type="text" id="meta-author"></label>
+            <label>Тема <input type="text" id="meta-subject"></label>
+            <label>Ключевые слова <input type="text" id="meta-keywords" placeholder="через запятую"></label>
+            <label>Создатель (Creator) <input type="text" id="meta-creator"></label>
+            <label>Производитель (Producer) <input type="text" id="meta-producer"></label>
+            <div class="meta-readonly" id="meta-readonly"></div>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="meta-run" disabled>Сохранить изменения</button>
+          </div>
+          <div class="status" id="meta-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-forms" hidden>
+        <h1>Заполнить форму</h1>
+        <p class="panel-desc">Заполните поля интерактивной PDF-формы (AcroForm).</p>
+        <div class="card">
+          <div id="forms-picker"></div>
+          <div class="forms-fields" id="forms-fields"></div>
+          <div class="option-row" id="forms-flatten-row" hidden>
+            <label><input type="checkbox" id="forms-flatten"> Сделать поля неизменяемыми (flatten) при сохранении</label>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="forms-run" disabled>Сохранить PDF</button>
+          </div>
+          <div class="status" id="forms-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-protect" hidden>
+        <h1>Пароль / защита</h1>
+        <p class="panel-desc">Установите пароль на открытие для одного или нескольких PDF (RC4 128-бит, стандартный защитный механизм PDF).
+          Работает только с незашифрованными файлами.</p>
+        <div class="card">
+          <div id="protect-picker"></div>
+          <div class="option-row" id="protect-options" hidden>
+            <label>Пароль для открытия <input type="password" id="protect-user-pass"></label>
+            <label>Пароль владельца (необязательно) <input type="password" id="protect-owner-pass"></label>
+            <label><input type="checkbox" id="protect-allow-print" checked> Разрешить печать</label>
+            <label><input type="checkbox" id="protect-allow-copy" checked> Разрешить копирование текста</label>
+            <label><input type="checkbox" id="protect-allow-modify"> Разрешить редактирование</label>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="protect-run" disabled>Защитить и скачать</button>
+          </div>
+          <div class="status" id="protect-status"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-compress" hidden>
+        <h1>Сжать PDF</h1>
+        <p class="panel-desc">Уменьшите размер одного или нескольких файлов: пересжатие встроенных JPEG-изображений и оптимизация структуры документа.</p>
+        <div class="card">
+          <div id="compress-picker"></div>
+          <div class="option-row" id="compress-options" hidden>
+            <label>Качество изображений: <input type="range" id="compress-quality" min="0.1" max="0.95" step="0.05" value="0.6"></label>
+            <span id="compress-quality-label">60%</span>
+          </div>
+          <div class="actions">
+            <button class="btn primary" id="compress-run" disabled>Сжать и скачать</button>
+          </div>
+          <div class="status" id="compress-status"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="vendor/fontkit.umd.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="js/pdfjs-setup.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/pool.js"></script>
+<script src="js/pool-ui.js"></script>
+<script src="js/file-picker.js"></script>
+<script src="js/lightbox.js"></script>
+<script src="js/thumbnails.js"></script>
+<script src="js/crypto-rc4.js"></script>
+<script src="js/pdf-encrypt.js"></script>
+<script src="js/tool-merge.js"></script>
+<script src="js/tool-split.js"></script>
+<script src="js/tool-pages.js"></script>
+<script src="js/tool-images-to-pdf.js"></script>
+<script src="js/tool-pdf-to-images.js"></script>
+<script src="js/tool-extract-text.js"></script>
+<script src="js/tool-extract-images.js"></script>
+<script src="js/tool-watermark.js"></script>
+<script src="js/tool-metadata.js"></script>
+<script src="js/tool-forms.js"></script>
+<script src="js/tool-protect.js"></script>
+<script src="js/tool-compress.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

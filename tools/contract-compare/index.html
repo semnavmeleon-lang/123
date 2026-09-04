@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сверка договоров по двум Excel-файлам</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f3f5fa;
+    --card-bg: #ffffff;
+    --border: #e0e4ee;
+    --border-soft: #ececf2;
+    --text: #1c2130;
+    --text-muted: #656c7a;
+    --text-faint: #98a0ae;
+    --primary: #2a6fdb;
+    --primary-dark: #1f57ad;
+    --primary-bg: #eaf1fd;
+    --success: #16803c;
+    --success-bg: #e9f9ef;
+    --warn: #9a6a00;
+    --warn-bg: #fff6e0;
+    --error: #c22032;
+    --error-bg: #fdecee;
+    --radius-lg: 10px;
+    --radius-md: 8px;
+    --radius-sm: 5px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 20px 60px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+  .subtitle { color: var(--text-muted); font-size: 13.5px; margin: 0 0 22px; }
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 820px) { .cards { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+  }
+  .card h2 {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--primary-dark);
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 12px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input[type=file] {
+    display: block;
+    width: 100%;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  input[type=file]::file-selector-button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 13px;
+    color: #fff;
+    background: var(--primary);
+    border: none;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    margin-right: 10px;
+  }
+  input[type=file]::file-selector-button:hover { background: var(--primary-dark); }
+  select, input[type=text] {
+    width: 100%;
+    font: inherit;
+    font-size: 13.5px;
+    padding: 8px 10px;
+    border: 1px solid #d6dceb;
+    border-radius: var(--radius-sm);
+    background: #fff;
+    color: var(--text);
+  }
+  select:focus, input[type=text]:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-bg);
+  }
+  select:disabled { color: var(--text-faint); background: #f7f8fb; }
+  .file-meta { font-size: 12px; color: var(--text-faint); margin-top: 6px; min-height: 16px; }
+  .options-card { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+  .opt-group { min-width: 220px; flex: 1; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .checkbox-row input { width: auto; }
+  .checkbox-row label { margin: 0; font-size: 13px; font-weight: 400; color: var(--text); }
+  .actions { margin: 18px 0 22px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 13.5px;
+    padding: 10px 18px;
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+  }
+  button#compareBtn { background: var(--primary); color: #fff; }
+  button#compareBtn:hover:not(:disabled) { background: var(--primary-dark); }
+  button#compareBtn:disabled { background: #b7c2d6; cursor: default; }
+  button#exportBtn { background: #fff; color: var(--text); border: 1px solid #d6dceb; }
+  button#exportBtn:hover:not(:disabled) { background: #f4f6fb; }
+  button#exportBtn:disabled { color: var(--text-faint); cursor: default; background: #fff; border-color: var(--border); }
+  .status { font-size: 12.5px; }
+  .status:empty { display: none; }
+  .status.ok { color: var(--success); }
+  .status.warn { color: var(--warn); }
+  .status.error { color: var(--error); }
+  .summary {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .stat {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 10px 16px;
+    min-width: 130px;
+  }
+  .stat .num { font-size: 20px; font-weight: 700; }
+  .stat .lbl { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .03em; }
+  .stat.found .num { color: var(--success); }
+  .stat.missing .num { color: var(--error); }
+  .filter-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .filter-row input[type=text] { max-width: 280px; }
+  .table-wrap {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: auto;
+    max-height: 640px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+  thead th {
+    position: sticky; top: 0;
+    background: #f7f8fb;
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    color: var(--text-muted);
+    z-index: 1;
+  }
+  tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-soft);
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:hover { background: #f7f9fd; }
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+  .badge.found { background: var(--success-bg); color: var(--success); }
+  .badge.missing { background: var(--error-bg); color: var(--error); }
+  .col-src { background: #fbfbfd; }
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--text-faint); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Сверка договоров по двум Excel-файлам</h1>
+  <p class="subtitle">
+    Загрузите файл №1 со столбцом «Номер основного договора к пролонгации», затем файл №2 —
+    в нём инструмент найдёт каждый номер и покажет всю строку, где он встретился.
+  </p>
+
+  <div class="cards">
+    <div class="card">
+      <h2>Файл 1 · источник номеров</h2>
+      <label for="file1">Excel-файл</label>
+      <input type="file" id="file1" accept=".xlsx,.xls,.xlsm,.csv">
+      <div class="file-meta" id="file1meta"></div>
+
+      <label for="sheet1">Лист</label>
+      <select id="sheet1" disabled></select>
+
+      <label for="col1">Столбец с номером договора</label>
+      <select id="col1" disabled></select>
+    </div>
+
+    <div class="card">
+      <h2>Файл 2 · где искать</h2>
+      <label for="file2">Excel-файл</label>
+      <input type="file" id="file2" accept=".xlsx,.xls,.xlsm,.csv">
+      <div class="file-meta" id="file2meta"></div>
+
+      <label for="sheet2">Лист</label>
+      <select id="sheet2" disabled></select>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="allCols2" checked>
+        <label for="allCols2">Искать по всем столбцам файла 2</label>
+      </div>
+
+      <label for="col2" id="col2label" style="display:none">Столбец для поиска в файле 2</label>
+      <select id="col2" disabled style="display:none"></select>
+    </div>
+  </div>
+
+  <div class="card options-card">
+    <div class="opt-group">
+      <label for="matchMode">Режим сравнения</label>
+      <select id="matchMode">
+        <option value="exact" selected>Точное совпадение ячейки</option>
+        <option value="contains">Ячейка содержит номер</option>
+      </select>
+    </div>
+    <div class="opt-group">
+      <div class="checkbox-row" style="margin-top:0">
+        <input type="checkbox" id="ignoreCase" checked>
+        <label for="ignoreCase">Игнорировать регистр и лишние пробелы</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="compareBtn" disabled>Сравнить</button>
+    <button id="exportBtn" disabled>Скачать результат (.xlsx)</button>
+    <span class="status" id="statusMsg"></span>
+  </div>
+
+  <div id="resultsArea"></div>
+</div>
+
+<script>
+const state = {
+  wb1: null, wb2: null,
+  rows1: null, headers1: null,   // rows1: array of arrays (data rows, no header row)
+  rows2: null, headers2: null,
+  results: null
+};
+
+const DEFAULT_COLUMN_NAME = "Номер основного договора к пролонгации";
+
+function normText(v) {
+  return String(v ?? '').replace(/\s+/g, ' ').trim();
+}
+function normKey(v, ignoreCase) {
+  const t = normText(v);
+  return ignoreCase ? t.toLowerCase() : t;
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg || '';
+  el.className = 'status' + (type ? ' ' + type : '');
+}
+
+async function readWorkbook(file) {
+  const buf = await file.arrayBuffer();
+  return XLSX.read(buf, { type: 'array', cellDates: true });
+}
+
+function sheetToRows(workbook, sheetName) {
+  const ws = workbook.Sheets[sheetName];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, blankrows: false });
+  if (!aoa.length) return { headers: [], rows: [] };
+  const headers = aoa[0].map((h, i) => normText(h) || `Столбец ${i + 1}`);
+  const rows = aoa.slice(1);
+  return { headers, rows };
+}
+
+function populateSheetSelect(select, workbook) {
+  select.innerHTML = '';
+  workbook.SheetNames.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  });
+  select.disabled = workbook.SheetNames.length === 0;
+}
+
+function guessColumnIndex(headers, target) {
+  const targetNorm = normKey(target, true);
+  let idx = headers.findIndex(h => normKey(h, true) === targetNorm);
+  if (idx === -1) idx = headers.findIndex(h => normKey(h, true).includes(targetNorm));
+  return idx;
+}
+
+function populateColumnSelect(select, headers, preferredIndex) {
+  select.innerHTML = '';
+  headers.forEach((h, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = h;
+    select.appendChild(opt);
+  });
+  select.disabled = headers.length === 0;
+  if (preferredIndex != null && preferredIndex >= 0) select.value = String(preferredIndex);
+}
+
+function updateCompareAvailability() {
+  const ready = state.rows1 && state.rows2 &&
+    document.getElementById('col1').value !== '' &&
+    !document.getElementById('col1').disabled;
+  document.getElementById('compareBtn').disabled = !ready;
+}
+
+document.getElementById('file1').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const meta = document.getElementById('file1meta');
+  const sheetSel = document.getElementById('sheet1');
+  const colSel = document.getElementById('col1');
+  if (!file) return;
+  try {
+    setStatus('Читаю файл 1…');
+    state.wb1 = await readWorkbook(file);
+    meta.textContent = `${file.name} · ${state.wb1.SheetNames.length} лист(ов)`;
+    populateSheetSelect(sheetSel, state.wb1);
+    sheetSel.dispatchEvent(new Event('change'));
+    setStatus('');
+  } catch (err) {
+    setStatus('Не удалось прочитать файл 1: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('sheet1').addEventListener('change', (e) => {
+  if (!state.wb1) return;
+  const { headers, rows } = sheetToRows(state.wb1, e.target.value);
+  state.headers1 = headers;
+  state.rows1 = rows;
+  const guess = guessColumnIndex(headers, DEFAULT_COLUMN_NAME);
+  populateColumnSelect(document.getElementById('col1'), headers, guess);
+  updateCompareAvailability();
+});
+
+document.getElementById('col1').addEventListener('change', updateCompareAvailability);
+
+document.getElementById('file2').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const meta = document.getElementById('file2meta');
+  const sheetSel = document.getElementById('sheet2');
+  if (!file) return;
+  try {
+    setStatus('Читаю файл 2…');
+    state.wb2 = await readWorkbook(file);
+    meta.textContent = `${file.name} · ${state.wb2.SheetNames.length} лист(ов)`;
+    populateSheetSelect(sheetSel, state.wb2);
+    sheetSel.dispatchEvent(new Event('change'));
+    setStatus('');
+  } catch (err) {
+    setStatus('Не удалось прочитать файл 2: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('sheet2').addEventListener('change', (e) => {
+  if (!state.wb2) return;
+  const { headers, rows } = sheetToRows(state.wb2, e.target.value);
+  state.headers2 = headers;
+  state.rows2 = rows;
+  populateColumnSelect(document.getElementById('col2'), headers, 0);
+  updateCompareAvailability();
+});
+
+document.getElementById('allCols2').addEventListener('change', (e) => {
+  const show = !e.target.checked;
+  document.getElementById('col2label').style.display = show ? '' : 'none';
+  document.getElementById('col2').style.display = show ? '' : 'none';
+});
+
+function cellsToSearch(row, allCols, singleColIdx) {
+  if (allCols) return row.map((v, i) => [i, v]);
+  return [[singleColIdx, row[singleColIdx]]];
+}
+
+function runCompare() {
+  const col1Idx = parseInt(document.getElementById('col1').value, 10);
+  const allCols2 = document.getElementById('allCols2').checked;
+  const col2Idx = parseInt(document.getElementById('col2').value || '0', 10);
+  const matchMode = document.getElementById('matchMode').value;
+  const ignoreCase = document.getElementById('ignoreCase').checked;
+
+  const sourceValues = [];
+  state.rows1.forEach((row, i) => {
+    const raw = row[col1Idx];
+    const text = normText(raw);
+    if (text !== '') sourceValues.push({ excelRow: i + 2, value: text });
+  });
+
+  let index2 = null;
+  if (matchMode === 'exact') {
+    index2 = new Map();
+    state.rows2.forEach((row, i) => {
+      cellsToSearch(row, allCols2, col2Idx).forEach(([colIdx, val]) => {
+        const key = normKey(val, ignoreCase);
+        if (key === '') return;
+        if (!index2.has(key)) index2.set(key, []);
+        index2.get(key).push({ excelRow: i + 2, colIdx });
+      });
+    });
+  }
+
+  const results = [];
+  for (const src of sourceValues) {
+    const srcKey = normKey(src.value, ignoreCase);
+    let matches = [];
+    if (matchMode === 'exact') {
+      matches = index2.get(srcKey) || [];
+    } else {
+      state.rows2.forEach((row, i) => {
+        cellsToSearch(row, allCols2, col2Idx).forEach(([colIdx, val]) => {
+          const cellKey = normKey(val, ignoreCase);
+          if (cellKey !== '' && cellKey.includes(srcKey)) {
+            matches.push({ excelRow: i + 2, colIdx });
+          }
+        });
+      });
+    }
+
+    if (matches.length === 0) {
+      results.push({ srcRow: src.excelRow, value: src.value, found: false });
+    } else {
+      matches.forEach(m => {
+        results.push({
+          srcRow: src.excelRow,
+          value: src.value,
+          found: true,
+          matchExcelRow: m.excelRow,
+          matchColumn: state.headers2[m.colIdx],
+          rowData: state.rows2[m.excelRow - 2]
+        });
+      });
+    }
+  }
+  return results;
+}
+
+function renderResults(results) {
+  const area = document.getElementById('resultsArea');
+  const foundCount = results.filter(r => r.found).length;
+  const missingValues = new Set(results.filter(r => !r.found).map(r => r.value));
+  const totalValues = new Set(results.map(r => r.value)).size;
+
+  if (results.length === 0) {
+    area.innerHTML = '<div class="empty-state">Нет значений для сравнения — проверьте выбранный столбец в файле 1.</div>';
+    return;
+  }
+
+  const summaryHtml = `
+    <div class="summary">
+      <div class="stat"><div class="num">${totalValues}</div><div class="lbl">Всего номеров</div></div>
+      <div class="stat found"><div class="num">${totalValues - missingValues.size}</div><div class="lbl">Найдено в файле 2</div></div>
+      <div class="stat missing"><div class="num">${missingValues.size}</div><div class="lbl">Не найдено</div></div>
+      <div class="stat"><div class="num">${results.length}</div><div class="lbl">Совпадений всего</div></div>
+    </div>
+    <div class="filter-row">
+      <input type="text" id="filterText" placeholder="Фильтр по значению…">
+      <div class="checkbox-row" style="margin-top:0">
+        <input type="checkbox" id="onlyMissing">
+        <label for="onlyMissing">Показать только не найденные</label>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="resultsTable">
+      <thead><tr>
+        <th>№</th>
+        <th>Строка в файле 1</th>
+        <th>Номер договора</th>
+        <th>Статус</th>
+        <th>Строка в файле 2</th>
+        <th>Столбец совпадения</th>
+        ${(state.headers2 || []).map(h => `<th>${escapeHtml(h)}</th>`).join('')}
+      </tr></thead>
+      <tbody>
+        ${results.map((r, i) => resultRowHtml(r, i)).join('')}
+      </tbody>
+    </table></div>
+  `;
+  area.innerHTML = summaryHtml;
+
+  document.getElementById('filterText').addEventListener('input', applyFilters);
+  document.getElementById('onlyMissing').addEventListener('change', applyFilters);
+}
+
+function resultRowHtml(r, i) {
+  const rowData = r.rowData || [];
+  const dataCells = (state.headers2 || []).map((_, ci) => `<td>${escapeHtml(rowData[ci] ?? '')}</td>`).join('');
+  return `<tr data-value="${escapeHtml(r.value.toLowerCase())}" data-found="${r.found}">
+    <td>${i + 1}</td>
+    <td>${r.srcRow}</td>
+    <td class="col-src">${escapeHtml(r.value)}</td>
+    <td>${r.found ? '<span class="badge found">Найден</span>' : '<span class="badge missing">Не найден</span>'}</td>
+    <td>${r.found ? r.matchExcelRow : '—'}</td>
+    <td>${r.found ? escapeHtml(r.matchColumn) : '—'}</td>
+    ${r.found ? dataCells : (state.headers2 || []).map(() => '<td>—</td>').join('')}
+  </tr>`;
+}
+
+function applyFilters() {
+  const text = document.getElementById('filterText').value.trim().toLowerCase();
+  const onlyMissing = document.getElementById('onlyMissing').checked;
+  document.querySelectorAll('#resultsTable tbody tr').forEach(tr => {
+    const matchesText = !text || tr.dataset.value.includes(text);
+    const matchesMissing = !onlyMissing || tr.dataset.found === 'false';
+    tr.style.display = (matchesText && matchesMissing) ? '' : 'none';
+  });
+}
+
+function escapeHtml(v) {
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+document.getElementById('compareBtn').addEventListener('click', () => {
+  try {
+    setStatus('Сравниваю…');
+    state.results = runCompare();
+    renderResults(state.results);
+    document.getElementById('exportBtn').disabled = state.results.length === 0;
+    setStatus(`Готово: обработано ${state.results.length} строк результата.`, 'ok');
+  } catch (err) {
+    setStatus('Ошибка при сравнении: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (!state.results) return;
+  const headers2 = state.headers2 || [];
+  const aoa = [
+    ['№', 'Строка в файле 1', 'Номер договора', 'Статус', 'Строка в файле 2', 'Столбец совпадения', ...headers2]
+  ];
+  state.results.forEach((r, i) => {
+    aoa.push([
+      i + 1,
+      r.srcRow,
+      r.value,
+      r.found ? 'Найден' : 'Не найден',
+      r.found ? r.matchExcelRow : '',
+      r.found ? r.matchColumn : '',
+      ...(r.found ? headers2.map((_, ci) => (r.rowData || [])[ci] ?? '') : headers2.map(() => ''))
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Результат');
+  XLSX.writeFile(wb, 'contract-compare-result.xlsx');
+});
+</script>
+</body>
+</html>
