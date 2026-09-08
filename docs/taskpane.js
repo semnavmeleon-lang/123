@@ -39,7 +39,10 @@ function onSaveClick() {
 
   saveCurrentEmail()
     .then((fileName) => {
-      setStatus("Готово: " + fileName + "\nПроверьте папку «Загрузки» в браузере.", "ok");
+      setStatus(
+        "Открылось отдельное окно — нажмите в нём «Скачать .eml», чтобы сохранить: " + fileName,
+        "ok"
+      );
     })
     .catch((err) => {
       console.error(err);
@@ -65,8 +68,30 @@ async function saveCurrentEmail() {
 
   const eml = buildEml(item, htmlBody, attachments);
   const fileName = sanitizeFileName(item.subject || "Без темы") + ".eml";
-  downloadBlob(eml, fileName, "message/rfc822");
+  await openDownloadDialog(eml, fileName);
   return fileName;
+}
+
+function openDownloadDialog(eml, fileName) {
+  // Outlook's task pane runs in a restricted webview that silently blocks
+  // programmatic file downloads. Office Dialog API opens a real top-level
+  // window instead, where a user click reliably triggers a save.
+  localStorage.setItem("svEmailContent", eml);
+  localStorage.setItem("svEmailFileName", fileName);
+
+  return new Promise((resolve, reject) => {
+    Office.context.ui.displayDialogAsync(
+      "https://localhost:3000/download.html",
+      { height: 25, width: 30, promptBeforeOpen: false },
+      (result) => {
+        if (result.status === Office.AsyncResultStatus.Succeeded) {
+          resolve();
+        } else {
+          reject(result.error);
+        }
+      }
+    );
+  });
 }
 
 function getBodyHtml(item) {
@@ -218,18 +243,6 @@ function base64EncodeUnicode(str) {
 
 function wrapBase64(b64) {
   return b64.replace(/(.{76})/g, "$1\r\n");
-}
-
-function downloadBlob(text, fileName, mimeType) {
-  const blob = new Blob([text], { type: mimeType + ";charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 function sanitizeFileName(name) {

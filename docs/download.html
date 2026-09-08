@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Скачать письмо</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    padding: 24px;
+    text-align: center;
+    color: #1f2328;
+  }
+  p {
+    font-size: 13px;
+    color: #57606a;
+    margin: 0 0 16px 0;
+  }
+  button {
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 28px;
+    border: none;
+    border-radius: 6px;
+    background: #0078d4;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:hover { background: #106ebe; }
+  button:disabled { background: #c8c6c4; cursor: default; }
+  #status {
+    margin-top: 14px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  #status.error { color: #c42b1c; }
+  #status.ok { color: #107c10; }
+</style>
+</head>
+<body>
+
+<p>Письмо готово. Нажмите кнопку, чтобы сохранить файл на компьютер.</p>
+<button id="downloadBtn">Скачать .eml</button>
+<div id="status"></div>
+
+<script>
+  Office.onReady(() => {
+    const btn = document.getElementById("downloadBtn");
+    if (btn) btn.addEventListener("click", doDownload);
+  });
+
+  function setStatus(msg, kind) {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    el.className = kind || "";
+  }
+
+  function doDownload() {
+    const content = localStorage.getItem("svEmailContent");
+    const fileName = localStorage.getItem("svEmailFileName") || "email.eml";
+
+    if (!content) {
+      setStatus("Не удалось найти данные письма. Закройте окно и нажмите «Сохранить письмо» ещё раз.", "error");
+      return;
+    }
+
+    const blob = new Blob([content], { type: "message/rfc822;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+    localStorage.removeItem("svEmailContent");
+    localStorage.removeItem("svEmailFileName");
+
+    setStatus("Готово: " + fileName + "\nПроверьте папку «Загрузки». Это окно можно закрыть.", "ok");
+    document.getElementById("downloadBtn").disabled = true;
+  }
+</script>
+
+</body>
+</html>
