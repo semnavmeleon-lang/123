@@ -33,6 +33,7 @@
     <Form xsi:type="ItemRead">
       <DesktopSettings>
         <SourceLocation DefaultValue="https://semnavmeleon-lang.github.io/123/taskpane.html" />
+        <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
   </FormSettings>
