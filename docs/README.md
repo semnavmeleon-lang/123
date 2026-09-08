@@ -12,16 +12,33 @@ Outlook всё равно требует HTTPS даже для localhost, поэ
 
 ## 1. Подготовить сертификат и запустить локальный сервер
 
-1. Установите зависимость (один раз):
-   ```
-   pip install cryptography
-   ```
-2. Сгенерируйте сертификат для `localhost` (один раз, из корня репозитория):
-   ```
-   python tools/generate_cert.py
-   ```
-   Появятся файлы `tools/localhost-cert.pem` и `tools/localhost-key.pem`.
-3. **Добавьте сертификат в доверенные** (иначе Outlook покажет ошибку сертификата), в PowerShell
+Сертификат можно сгенерировать двумя способами — выберите тот, что заработает у вас.
+Файлы на выходе одинаковые (`tools/localhost-cert.pem` и `tools/localhost-key.pem`),
+дальше шаги (2 и 3) одни и те же независимо от способа.
+
+### Способ А: openssl (не требует интернета, обычно уже есть с Git for Windows)
+
+Если стоит Git for Windows, у вас, скорее всего, уже есть `openssl` — откройте **Git Bash**
+(не PowerShell — там своей `openssl` нет) в корне репозитория и выполните:
+```
+openssl req -x509 -newkey rsa:2048 -keyout tools/localhost-key.pem -out tools/localhost-cert.pem -days 3650 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+(на запрос пароля/passphrase ничего не нужно — флаг `-nodes` его отключает).
+
+### Способ Б: Python + cryptography (нужен доступ к PyPI)
+
+```
+pip install cryptography
+python tools/generate_cert.py
+```
+Если тут таймаут/зависает — скорее всего, корпоративный прокси/firewall блокирует
+`pypi.org`/`files.pythonhosted.org`. В этом случае проще способ А, либо уточните у ИТ
+прокси для pip: `pip install --proxy http://ваш-прокси:порт cryptography`.
+
+### Дальше (любым способом)
+
+1. Появятся файлы `tools/localhost-cert.pem` и `tools/localhost-key.pem`.
+2. **Добавьте сертификат в доверенные** (иначе Outlook покажет ошибку сертификата), в PowerShell
    **от имени администратора**:
    ```
    Import-Certificate -FilePath tools\localhost-cert.pem -CertStoreLocation Cert:\LocalMachine\Root
@@ -29,12 +46,14 @@ Outlook всё равно требует HTTPS даже для localhost, поэ
    Либо вручную: дважды кликните `localhost-cert.pem` → **Установить сертификат** →
    **Локальный компьютер** → «Поместить все сертификаты в следующее хранилище» →
    **Доверенные корневые центры сертификации** → Готово.
-4. Запустите сервер и оставьте окно открытым, пока пользуетесь надстройкой:
+3. Запустите сервер и оставьте окно открытым, пока пользуетесь надстройкой:
    ```
    python tools/serve.py
    ```
    Он поднимет `https://localhost:3000/` и будет отдавать `manifest.xml`, `taskpane.html` и иконки
-   из папки `docs/`.
+   из папки `docs/`. Для этого шага `cryptography` не нужен в любом случае — сервер сам по себе
+   написан на чистом Python (`http.server` + `ssl`), библиотека нужна была только чтобы сделать
+   сертификат способом Б.
 
 Если сервер не запущен — надстройка перестаёт работать (кнопка на ленте останется, но панель
 не откроется). Так что перед использованием надстройки не забывайте запускать `python tools/serve.py`.
