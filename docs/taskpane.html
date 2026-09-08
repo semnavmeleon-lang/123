@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=Edge">
+<title>Сохранить письмо</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    color: #1f2328;
+    background: #ffffff;
+  }
+  h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+  }
+  p.hint {
+    font-size: 12px;
+    color: #57606a;
+    margin: 0 0 16px 0;
+  }
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  button {
+    width: 100%;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 0;
+    border: none;
+    border-radius: 6px;
+    background: #0078d4;
+    color: #fff;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  button:hover { background: #106ebe; }
+  button:disabled { background: #c8c6c4; cursor: default; }
+  #status {
+    margin-top: 14px;
+    font-size: 13px;
+    min-height: 18px;
+    white-space: pre-wrap;
+  }
+  #status.error { color: #c42b1c; }
+  #status.ok { color: #107c10; }
+</style>
+</head>
+<body>
+
+<h1>Сохранить письмо на компьютер</h1>
+<p class="hint">Сохраняет открытое письмо в файл .eml (со всеми обычными вложениями) в папку «Загрузки» браузера.</p>
+
+<label><input type="checkbox" id="includeAttachments" checked> Включить вложения</label>
+
+<button id="saveBtn">Сохранить письмо</button>
+
+<div id="status"></div>
+
+<script src="taskpane.js"></script>
+</body>
+</html>
