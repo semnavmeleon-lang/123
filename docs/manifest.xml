@@ -12,7 +12,7 @@
   <DisplayName DefaultValue="Сохранить письмо" />
   <Description DefaultValue="Сохраняет открытое письмо (вместе с вложениями) на компьютер в виде файла .eml" />
   <IconUrl DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-32.png" />
-  <HighResIconUrl DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-80.png" />
+  <HighResolutionIconUrl DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-80.png" />
   <SupportUrl DefaultValue="https://github.com/semnavmeleon-lang/123" />
 
   <AppDomains>
