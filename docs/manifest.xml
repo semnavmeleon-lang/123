@@ -11,12 +11,12 @@
   <DefaultLocale>ru-RU</DefaultLocale>
   <DisplayName DefaultValue="Сохранить письмо" />
   <Description DefaultValue="Сохраняет открытое письмо (вместе с вложениями) на компьютер в виде файла .eml" />
-  <IconUrl DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-80.png" />
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
   <SupportUrl DefaultValue="https://github.com/semnavmeleon-lang/123" />
 
   <AppDomains>
-    <AppDomain>https://semnavmeleon-lang.github.io/123</AppDomain>
+    <AppDomain>https://localhost:3000</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -32,7 +32,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://semnavmeleon-lang.github.io/123/taskpane.html" />
+        <SourceLocation DefaultValue="https://localhost:3000/taskpane.html" />
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -86,13 +86,13 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-16.png" />
-        <bt:Image id="Icon.32x32" DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-32.png" />
-        <bt:Image id="Icon.80x80" DefaultValue="https://semnavmeleon-lang.github.io/123/assets/icon-80.png" />
+        <bt:Image id="Icon.16x16" DefaultValue="https://localhost:3000/assets/icon-16.png" />
+        <bt:Image id="Icon.32x32" DefaultValue="https://localhost:3000/assets/icon-32.png" />
+        <bt:Image id="Icon.80x80" DefaultValue="https://localhost:3000/assets/icon-80.png" />
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Commands.Url" DefaultValue="https://semnavmeleon-lang.github.io/123/taskpane.html" />
-        <bt:Url id="Taskpane.Url" DefaultValue="https://semnavmeleon-lang.github.io/123/taskpane.html" />
+        <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/taskpane.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Сохранение писем" />
