@@ -3,7 +3,28 @@
 Office.onReady(() => {
   const btn = document.getElementById("saveBtn");
   if (btn) btn.addEventListener("click", onSaveClick);
+
+  if (!isAttachmentContentSupported()) {
+    const checkbox = document.getElementById("includeAttachments");
+    const hint = document.getElementById("attachmentsHint");
+    if (checkbox) {
+      checkbox.checked = false;
+      checkbox.disabled = true;
+    }
+    if (hint) {
+      hint.textContent =
+        "Вложения недоступны: ваш почтовый сервер (Exchange) не поддерживает нужную версию API Outlook. Письмо сохранится без вложений.";
+      hint.hidden = false;
+    }
+  }
 });
+
+function isAttachmentContentSupported() {
+  return (
+    Office.context.requirements &&
+    Office.context.requirements.isSetSupported("Mailbox", "1.8")
+  );
+}
 
 function setStatus(msg, kind) {
   const el = document.getElementById("status");
@@ -61,6 +82,9 @@ function getBodyHtml(item) {
 }
 
 function getAttachments(item) {
+  if (!isAttachmentContentSupported()) {
+    return Promise.resolve([]);
+  }
   const cloudType = Office.MailboxEnums && Office.MailboxEnums.AttachmentType
     ? Office.MailboxEnums.AttachmentType.Cloud
     : "cloud";
