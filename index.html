@@ -1484,79 +1484,6 @@
     return outDoc.save();
   }
 
-  // КАСКО-заявление на страхование: у ВСК полис КАСКО уже цельный документ,
-  // поэтому здесь оформляется отдельное заявление с реквизитами страхователя
-  // и ссылкой на конкретный полис и Правила КАСКО № 171.6.
-  async function addKaskoZayavleniePage(pdfDoc, font, fontBold, d) {
-    const BLACK = window.PDFLib.rgb(0, 0, 0);
-    const SIZE = 11;
-    const LH = 14;
-    const flow = makeFlow(pdfDoc);
-
-    // Правый верхний угол — адресат и "от кого"
-    {
-      const page = flow.page;
-      const w = flow.width;
-      let y = flow.y;
-      y = drawRightAligned(page, fontBold, 12, "В САО «ВСК»", PAGE_MARGIN, w, y, BLACK);
-      y -= 16;
-      y = drawRightAligned(page, fontBold, 12, `от ${d.fioGenitive}`, PAGE_MARGIN, w, y, BLACK);
-      flow.y = y - 30;
-    }
-
-    flow.centered(fontBold, 13, "ЗАЯВЛЕНИЕ", BLACK);
-    flow.gap(18);
-    flow.centeredWrapped(
-      fontBold,
-      12,
-      "на страхование по договору добровольного комбинированного страхования автотранспортного средства (КАСКО)",
-      BLACK,
-      15
-    );
-    flow.gap(14);
-
-    const policyRef = d.policyNumber && d.policyNumber !== "unknown" ? `№ ${d.policyNumber}` : "";
-    const policyDate =
-      d.day && d.month && d.year ? ` от «${d.day}» ${d.month} ${d.year} г.` : "";
-
-    const body =
-      `Я, ${d.fio}, ${d.dob} года рождения, паспорт: серия ${d.passSeries} № ${d.passNumber},` +
-      `${formatPassportIssued(d, { sep: ", " })} зарегистрированный(ая) по адресу: ${d.address}, ` +
-      `прошу Страховщика — Страховое акционерное общество «ВСК» (САО «ВСК») — заключить со мной ` +
-      `договор добровольного комбинированного страхования автотранспортного средства (КАСКО) на условиях, ` +
-      `изложенных в Полисе ${policyRef}${policyDate} и Правилах комбинированного страхования ` +
-      `автотранспортных средств № 171.6 от 20.12.2024 (далее — Правила КАСКО).`;
-    flow.paragraph(font, SIZE, body, BLACK, LH, true);
-    flow.gap(8);
-
-    const confirm =
-      `Подтверждаю, что до заключения договора страхования ознакомлен(а) с Правилами КАСКО и Ключевым ` +
-      `информационным документом, экземпляр Правил КАСКО и Ключевого информационного документа получил(а). ` +
-      `Все сведения, представленные Страховщику при заключении настоящего договора, являются полными и ` +
-      `достоверными; о наступлении обстоятельств, влекущих изменение сведений, сообщённых Страховщику, ` +
-      `обязуюсь уведомить САО «ВСК» в предусмотренные Правилами КАСКО сроки.`;
-    flow.paragraph(font, SIZE, confirm, BLACK, LH, true);
-    flow.gap(8);
-
-    const pay =
-      `Обязуюсь уплатить страховую премию в размере и в сроки, установленные Полисом. Настоящее заявление ` +
-      `подписывается одновременно с получением Полиса и является его неотъемлемой частью в части ` +
-      `подтверждения перечисленных выше обстоятельств.`;
-    flow.paragraph(font, SIZE, pay, BLACK, LH, true);
-    flow.gap(26);
-
-    flow.paragraph(font, SIZE, `«${d.day}» ${d.month} ${d.year} г.`, BLACK, LH, false);
-    flow.gap(4);
-    flow.paragraph(
-      font,
-      SIZE,
-      `Страхователь: ______________ / ${d.fio} /`,
-      BLACK,
-      LH,
-      false
-    );
-  }
-
   async function buildKaskoFinalPdf(policyBytes, formData) {
     const policyDoc = await window.PDFLib.PDFDocument.load(policyBytes);
     const outDoc = await window.PDFLib.PDFDocument.create();
@@ -1565,7 +1492,7 @@
     const { font, fontBold } = await embedFonts(outDoc);
     await addPersonalDataConsentPage(outDoc, font, fontBold, formData);
     await addMarketingConsentPage(outDoc, font, fontBold, formData);
-    await addKaskoZayavleniePage(outDoc, font, fontBold, formData);
+    await addOtkazPage(outDoc, font, fontBold, formData);
     return outDoc.save();
   }
 
