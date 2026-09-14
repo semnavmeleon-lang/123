@@ -1,344 +1,86 @@
 <title>Скрипт обзвона КАСКО</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&display=swap">
 <style>
   :root {
-    --bg: #f5f7fa;
-    --surface: #ffffff;
-    --surface-2: #eef1f6;
-    --border: #dde3ec;
-    --text: #1a2332;
-    --text-muted: #5b6472;
-    --text-faint: #8b93a1;
-    --primary: #2456b8;
-    --primary-dark: #17407e;
-    --primary-bg: #e8eefb;
-    --warn: #a15c00;
-    --warn-bg: #fff3e0;
-    --danger: #b3261e;
-    --danger-bg: #fdeceb;
-    --success: #1e7a3d;
-    --success-bg: #e8f7ee;
-    --neutral: #4b5563;
-    --neutral-bg: #eceff2;
-    --radius-lg: 14px;
-    --radius-md: 10px;
-    --radius-sm: 6px;
+    --bg: #f3f5fa;
+    --card: #ffffff;
+    --border: #e0e4ee;
+    --text: #1c2130;
+    --text-muted: #656c7a;
+    --primary: #2a6fdb;
+    --primary-dark: #1f57ad;
+    --primary-bg: #eaf1fd;
+    --option-bg: #f7f8fb;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #12161d;
-      --surface: #1a2029;
-      --surface-2: #212836;
-      --border: #2c3441;
-      --text: #e7ebf1;
-      --text-muted: #a7b0bd;
-      --text-faint: #6f7887;
-      --primary: #7fa3ef;
-      --primary-dark: #a9c1f5;
-      --primary-bg: #1d2a44;
-      --warn: #e0a542;
-      --warn-bg: #3a2c10;
-      --danger: #f0776d;
-      --danger-bg: #3a1614;
-      --success: #6fcb92;
-      --success-bg: #123a22;
-      --neutral: #b7bfc9;
-      --neutral-bg: #262d38;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #12161d;
-    --surface: #1a2029;
-    --surface-2: #212836;
-    --border: #2c3441;
-    --text: #e7ebf1;
-    --text-muted: #a7b0bd;
-    --text-faint: #6f7887;
-    --primary: #7fa3ef;
-    --primary-dark: #a9c1f5;
-    --primary-bg: #1d2a44;
-    --warn: #e0a542;
-    --warn-bg: #3a2c10;
-    --danger: #f0776d;
-    --danger-bg: #3a1614;
-    --success: #6fcb92;
-    --success-bg: #123a22;
-    --neutral: #b7bfc9;
-    --neutral-bg: #262d38;
-  }
-
   * { box-sizing: border-box; }
   body {
     background: var(--bg);
     color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     margin: 0;
-    padding: 24px 16px 60px;
-    font-family: "PT Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 32px 20px 60px;
     line-height: 1.5;
   }
-  .page { max-width: 1080px; margin: 0 auto; }
+  .page { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; }
 
-  header.top { margin-bottom: 18px; }
-  header.top h1 {
-    font-family: "PT Serif", Georgia, "Times New Roman", serif;
-    font-size: 24px; margin: 0 0 6px; font-weight: 700; text-wrap: balance;
-  }
-  header.top p { margin: 0; color: var(--text-muted); font-size: 13.5px; max-width: 760px; }
-
-  .controls { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-  button {
+  .controls { display: flex; gap: 8px; margin-bottom: 16px; }
+  button.nav {
     font-family: inherit;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
-    padding: 8px 14px;
     font-size: 13px;
     font-weight: 600;
+    cursor: pointer;
+    padding: 7px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-muted);
   }
-  button:hover { border-color: var(--primary); color: var(--primary-dark); }
-  button:focus-visible, input:focus-visible, textarea:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 1px;
-  }
-  button:disabled { opacity: .45; cursor: default; }
-  button:disabled:hover { border-color: var(--border); color: var(--text); }
-  button.ghost { background: transparent; }
-  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-  button.primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); color: #fff; }
+  button.nav:hover { border-color: var(--primary); color: var(--primary-dark); }
+  button.nav:disabled { opacity: .4; cursor: default; }
+  button.nav:disabled:hover { border-color: var(--border); color: var(--text-muted); }
 
   .card {
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 18px 20px;
+    border-radius: 10px;
+    padding: 22px 24px;
   }
 
-  /* client note card */
-  .noteCard { margin-bottom: 16px; }
-  .noteCard h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); margin: 0 0 12px; font-weight: 700; }
-  .noteGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
-  .noteGrid label { display: block; font-size: 11.5px; color: var(--text-muted); margin-bottom: 4px; }
-  .noteGrid input, textarea {
-    width: 100%;
-    font-family: inherit;
-    font-size: 13px;
-    padding: 7px 9px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-  }
-  textarea { min-height: 54px; resize: vertical; }
-  .noteFoot { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 10px; flex-wrap: wrap; }
-  .noteFoot span { font-size: 11px; color: var(--text-faint); }
-
-  /* breadcrumb */
-  .breadcrumb { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-  .crumb {
-    font-size: 11.5px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-  .crumb.current { background: var(--primary-bg); color: var(--primary-dark); border-color: var(--primary); font-weight: 700; cursor: default; }
-
-  .grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 18px; align-items: start; }
-  @media (max-width: 860px) {
-    .grid { grid-template-columns: 1fr; }
-    .noteGrid { grid-template-columns: 1fr 1fr; }
-  }
-  @media (max-width: 480px) {
-    .noteGrid { grid-template-columns: 1fr; }
-  }
-
-  /* tags per group */
-  .tag { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; margin-bottom: 12px; }
-  .tag-A { background: var(--neutral-bg); color: var(--neutral); }
-  .tag-B { background: var(--warn-bg); color: var(--warn); }
-  .tag-C { background: var(--primary-bg); color: var(--primary-dark); }
-  .tag-D { background: var(--primary-bg); color: var(--primary-dark); }
-  .tag-E { background: var(--danger-bg); color: var(--danger); }
-  .tag-F { background: var(--success-bg); color: var(--success); }
-
-  .quote {
-    background: var(--primary-bg);
-    border-left: 3px solid var(--primary);
-    border-radius: var(--radius-sm);
-    padding: 16px 18px;
-    font-family: "PT Serif", Georgia, "Times New Roman", serif;
-    font-size: 16.5px;
-    line-height: 1.55;
-    color: var(--text);
-    margin-bottom: 14px;
-  }
-  .quote .ph { background: var(--surface); color: var(--primary-dark); padding: 1px 6px; border-radius: 4px; font-weight: 700; border: 1px solid var(--border); }
-
-  .opnote { display: flex; gap: 8px; margin-bottom: 18px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
-  .opnote b { color: var(--text); white-space: nowrap; }
+  .line { font-size: 16px; margin: 0 0 20px; }
+  .line .ph { background: var(--primary-bg); color: var(--primary-dark); padding: 1px 5px; border-radius: 4px; font-weight: 600; }
 
   .options { display: flex; flex-direction: column; gap: 8px; }
   .optionBtn {
     text-align: left;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    padding: 11px 14px;
-    border-radius: var(--radius-md);
+    font-family: inherit;
     font-size: 13.5px;
     font-weight: 600;
+    cursor: pointer;
+    padding: 10px 13px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--option-bg);
     color: var(--text);
   }
-  .optionBtn:before { content: "Клиент: "; font-weight: 700; color: var(--text-faint); }
   .optionBtn:hover { border-color: var(--primary); background: var(--primary-bg); color: var(--primary-dark); }
 
-  .endPanel { border-radius: var(--radius-md); padding: 16px; font-size: 13.5px; font-weight: 600; margin-top: 4px; }
-  .endPanel.success { background: var(--success-bg); color: var(--success); }
-  .endPanel.soft { background: var(--primary-bg); color: var(--primary-dark); }
-  .endPanel.hard { background: var(--danger-bg); color: var(--danger); }
-  .endPanel.neutral { background: var(--neutral-bg); color: var(--neutral); }
-
-  /* sidebar */
-  .sidebar .card { padding: 0; overflow: hidden; }
-  .tabs { display: flex; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .tabBtn { flex: 1 1 auto; border: none; border-radius: 0; background: var(--surface); font-size: 12px; padding: 11px 8px; color: var(--text-muted); }
-  .tabBtn.active { color: var(--primary-dark); background: var(--primary-bg); font-weight: 700; }
-  .tabBtn:hover { color: var(--primary-dark); }
-  .tabPanel { padding: 16px 18px; }
-
-  .jumpGroup { margin-bottom: 14px; }
-  .jumpGroup h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--text-faint); margin: 0 0 8px; }
-  .jumpBtn { display: block; width: 100%; text-align: left; margin-bottom: 6px; background: transparent; border-color: transparent; padding: 6px 8px; font-weight: 500; font-size: 12.5px; color: var(--text); }
-  .jumpBtn:hover { background: var(--surface-2); border-color: var(--border); color: var(--primary-dark); }
-  .jumpBtn.active { background: var(--primary-bg); color: var(--primary-dark); font-weight: 700; }
-
-  .table-scroll { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: 12px; min-width: 480px; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--text-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .02em; }
-
-  ul.plain { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text); }
-  ul.plain li { margin-bottom: 7px; }
-  .muted { color: var(--text-muted); }
-
-  .footNote { margin-top: 20px; font-size: 11.5px; color: var(--text-faint); border-top: 1px solid var(--border); padding-top: 12px; }
+  .done { font-size: 13.5px; color: var(--text-muted); margin: 0; }
 </style>
 
 <div class="page">
-
-  <header class="top">
-    <h1>Скрипт обзвона КАСКО</h1>
-    <p>Сценарий для звонков действующим клиентам по продлению договора: приветствие → сверка данных и опыта за год → удержание при сравнении с другими страховыми → расчёт и оформление продления. Нажимайте вариант ответа, наиболее близкий к тому, что говорит клиент.</p>
-    <div class="controls">
-      <button class="ghost" id="btnBack">← Назад</button>
-      <button class="ghost" id="btnRestart">Начать заново</button>
-    </div>
-  </header>
-
-  <div class="card noteCard">
-    <h2>Данные по звонку (сохраняются только в этом браузере)</h2>
-    <div class="noteGrid">
-      <div><label for="fClient">ФИО клиента</label><input id="fClient" placeholder="Имя Отчество"></div>
-      <div><label for="fCar">Автомобиль</label><input id="fCar" placeholder="Марка, модель, год"></div>
-      <div><label for="fInsurer">Номер полиса</label><input id="fInsurer" placeholder="№ текущего полиса КАСКО"></div>
-      <div><label for="fEnd">Окончание полиса</label><input id="fEnd" placeholder="ДД.ММ.ГГГГ"></div>
-    </div>
-    <label for="fNotes">Заметки по разговору</label>
-    <textarea id="fNotes" placeholder="Свободные заметки: возражения, договорённости, время перезвона..."></textarea>
-    <div class="noteFoot">
-      <span>Данные хранятся локально в вашем браузере и никуда не отправляются.</span>
-      <button class="ghost" id="btnClearNotes">Очистить данные звонка</button>
-    </div>
+  <h1>Скрипт обзвона КАСКО</h1>
+  <div class="controls">
+    <button class="nav" id="btnBack">← Назад</button>
+    <button class="nav" id="btnRestart">Начать заново</button>
   </div>
-
-  <div class="breadcrumb" id="breadcrumb"></div>
-
-  <div class="grid">
-    <div class="scriptPanel card" id="scriptPanel"></div>
-
-    <div class="sidebar card">
-      <div class="tabs" id="tabs">
-        <button class="tabBtn active" data-tab="jump">Быстрый переход</button>
-        <button class="tabBtn" data-tab="techniques">Техники</button>
-        <button class="tabBtn" data-tab="products">Продукты</button>
-        <button class="tabBtn" data-tab="docs">Документы</button>
-        <button class="tabBtn" data-tab="rules">Регламент</button>
-      </div>
-
-      <div class="tabPanel" id="tab-jump"></div>
-
-      <div class="tabPanel" id="tab-techniques" hidden>
-        <ul class="plain">
-          <li><b>Активное слушание.</b> Короткие «понимаю», «да» — не для того, чтобы перебить, а чтобы показать, что вы следите за мыслью. Дайте клиенту закончить, затем повторите его слова своими: «то есть смущает именно цена, а не сам факт продления» — это снимает напряжение и подтверждает, что вы поняли верно.</li>
-          <li><b>Алгоритм отработки возражения.</b> Выслушать полностью → уточнить настоящую причину конкретным вопросом → согласиться с тем, что в словах клиента справедливо → привести аргумент/факт → предложить следующий шаг. Не спорить и не защищаться.</li>
-          <li><b>«Да, и…» вместо «нет, вы не правы».</b> Прямое возражение клиенту включает защитную реакцию. Сначала согласие с частью сказанного («да, стоимость действительно выросла») — потом свой аргумент через «и» или «при этом», а не «но».</li>
-          <li><b>Уточняющий вопрос вместо спора с «дорого» / «не нужно».</b> Эти фразы почти никогда называют настоящую причину. «Дороже по сравнению с чем?», «что именно предлагают в другом варианте?» — выводит на причину, с которой уже можно работать.</li>
-          <li><b>Альтернативный вопрос при закрытии.</b> Не «будете оформлять?» (лёгкое «нет» в ответ), а выбор из двух устраивающих вас вариантов: «оплата сразу или в рассрочку?», «прислать на почту или в WhatsApp?». Любой выбор — это фактически «да».</li>
-          <li><b>Резюме перед завершением.</b> Коротко повторите договорённость вслух: «значит, продлеваем на прежнюю сумму, с франшизой, оплата в рассрочку» — исключает недопонимание и закрепляет решение психологически.</li>
-          <li><b>Без извинений за сам звонок.</b> Звонок о продлении — забота о клиенте (напоминание о сроке действия защиты), а не помеха. Фразы «извините, что отвлекаю», «не буду задерживать/беспокоить» ставят вас в позицию просителя — тревожность в голосе передаётся собеседнику. Ровный, уверенный тон работает лучше извинений.</li>
-        </ul>
-      </div>
-
-      <div class="tabPanel" id="tab-products" hidden>
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Продукт</th><th>Скидка</th><th>Ключевая защита</th><th>Осмотр Б/У</th></tr></thead>
-            <tbody>
-              <tr><td>Классика</td><td>база, 100% защиты</td><td>Все риски: ДТП (своя вина/третьих лиц/неустановленные), угон, ПТФ, ПДТЛ. Без франшизы при угоне и ДТП по вине установленных третьих лиц</td><td>да</td></tr>
-              <tr><td>Уверенный</td><td>до 30%</td><td>Тот же пакет, что в Классике, действие до 1-го случая (можно расширить)</td><td>да</td></tr>
-              <tr><td>Компакт +</td><td>до 60%</td><td>Полная гибель ТС (любая причина) + угон + любой ущерб при ДТП по вине установленных третьих лиц</td><td>упрощённый</td></tr>
-              <tr><td>Компакт базовый</td><td>до 65%</td><td>Полная гибель ТС (любая причина) + угон</td><td>упрощённый</td></tr>
-              <tr><td>Компакт</td><td>до 80%</td><td>ДТП по вине установленных третьих лиц; угон — опцией</td><td>упрощённый</td></tr>
-              <tr><td>Компакт фикс</td><td>до 90%</td><td>ДТП по вине установленных третьих лиц, включая обоюдную вину; кросс-продукт к ОСАГО</td><td>не требуется</td></tr>
-              <tr><td>Компакт минимум</td><td>до 95%</td><td>ДТП по вине установленного третьего лица без ОСАГО / не застрахован</td><td>не требуется</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="footNote" style="margin-top:10px;padding-top:0;border-top:none;">При снижении пакета рисков для удешевления полиса сверяйте, какие риски перестают покрываться. Тарифы и условия уточняйте в действующем регламенте — линейка обновляется.</p>
-      </div>
-
-      <div class="tabPanel" id="tab-docs" hidden>
-        <p class="muted" style="font-size:12.5px;margin:0 0 10px;">При продлении без изменений договор переоформляется на основе уже имеющихся документов. Донести нужно, только если что-то из этого изменилось за год:</p>
-        <ul class="plain">
-          <li>Водительское удостоверение <span class="muted">— если сменилось или добавился новый допущенный водитель</span></li>
-          <li>СТС <span class="muted">— если менялось (перерегистрация, новые номера)</span></li>
-          <li>Паспорт страхователя <span class="muted">— если менялись страница с регистрацией или личные данные</span></li>
-          <li>ДКП <span class="muted">— если сменился собственник автомобиля</span></li>
-          <li>Документы о стоимости доп. оборудования <span class="muted">— если добавилось новое застрахованное оборудование</span></li>
-        </ul>
-        <p class="footNote" style="margin-top:10px;padding-top:0;border-top:none;">Если менялось использование автомобиля (такси, каршеринг, доставка) или число собственников — уточните это отдельно, это может повлиять на возможность продления на стандартных условиях.</p>
-      </div>
-
-      <div class="tabPanel" id="tab-rules" hidden>
-        <ul class="plain">
-          <li>Никогда не запрашивайте номер карты, CVV-код или код из СМС — ни при каких обстоятельствах.</li>
-          <li>На вопрос «откуда у вас мои данные» — честно поясняйте, что клиент уже состоит в базе ВСК как действующий страхователь по КАСКО, вы не сторонний источник.</li>
-          <li>Начинайте обзвон по продлению заблаговременно, по регламенту компании — чтобы у клиента было время принять решение и не образовался перерыв в защите между окончанием старого и началом нового полиса.</li>
-          <li>Если изменилось использование автомобиля (такси/доставка/каршеринг/аренда) или число собственников — стандартное продление может быть недоступно; не оформляйте в обход ограничений.</li>
-          <li>Не обещайте скидку сверх предусмотренной продуктом — по индивидуальным запросам передавайте вопрос руководителю.</li>
-          <li>При категоричном отказе или просьбе не звонить — фиксируйте это, повторный звонок по этому вопросу недопустим.</li>
-          <li>Каждый звонок фиксируйте в CRM с результатом и точными договорённостями о повторном контакте.</li>
-          <li>Соблюдайте допустимые часы для звонков согласно внутреннему регламенту компании.</li>
-          <li>При недозвоне фиксируйте статус «недозвон» и соблюдайте интервал повторных попыток — не звоните подряд многократно за короткий срок.</li>
-          <li>При грубости со стороны клиента не вступайте в конфликт — вежливо завершайте разговор.</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-
-  <p class="footNote">Продуктовые данные приведены по внутренней методичке «Автокаско для физических лиц». Перед звонками сверяйте актуальные скидки, тарифы и условия продуктов с действующим регламентом — линейка может обновляться.</p>
+  <div class="card" id="panel"></div>
 </div>
 
 <script>
 (function () {
   var NODES = {
     start: {
-      group: "A", tag: "Приветствие",
       text: "Добрый день, [[Имя Отчество]]! Меня зовут [[Имя оператора]], я специалист компании ВСК. Ваш полис КАСКО на автомобиль [[марка/модель]] заканчивается [[дата окончания]] — звоню обсудить условия продления. Уделите пару минут, сейчас удобно?",
-      note: "Обращайтесь к клиенту по имени и отчеству на протяжении всего разговора. Дату окончания полиса и марку автомобиля уточните по карточке клиента до звонка.",
       options: [
         { label: "Да, удобно, слушаю", next: "confirm_data" },
         { label: "Не могу сейчас говорить", next: "busy" },
@@ -349,18 +91,14 @@
       ]
     },
     busy: {
-      group: "A", tag: "Клиент занят",
       text: "Понимаю, [[Имя Отчество]]. Когда вам удобнее вернуться к разговору — сегодня во второй половине дня или завтра в первой?",
-      note: "Зафиксируйте точное время повторного звонка и держите в уме срок окончания полиса — не откладывайте повторный звонок слишком близко к дате.",
       options: [
         { label: "Хорошо, перезвоните в это время", next: "closing_soft" },
         { label: "Вообще не звоните мне больше", next: "neg_categorical" }
       ]
     },
     trust: {
-      group: "A", tag: "Проверка доверия",
       text: "Отвечу конкретно: вы клиент ВСК, у вас оформлен полис КАСКО на автомобиль [[марка/модель]], он заканчивается [[дата]] — я как раз по этому вопросу. Если хотите убедиться, что звонок от ВСК, можете самостоятельно перезвонить на номер, указанный на сайте vsk.ru. И сразу уточню: я никогда не спрошу у вас номер карты, CVV-код или код из смс — этого не делает ни один сотрудник страховой компании.",
-      note: "Эта фраза снимает основное подозрение «это мошенники». Говорите спокойно, без спешки.",
       options: [
         { label: "Хорошо, понятно, слушаю вас", next: "confirm_data" },
         { label: "Всё равно не звоните мне", next: "neg_categorical" },
@@ -368,9 +106,7 @@
       ]
     },
     hard_refuse_early: {
-      group: "A", tag: "Ранний отказ",
       text: "Понимаю. Тогда буквально коротко: ваш полис КАСКО заканчивается [[дата]], и без продления с этой даты автомобиль останется без защиты. Если сейчас неактуально — подскажите день, когда вернуться к разговору, чтобы не упустить срок?",
-      note: "Одна попытка напомнить о риске перерыва в защите, без давления. Если отказ повторяется — переходите к вежливому завершению, повторно не убеждайте.",
       options: [
         { label: "Хорошо, давайте коротко", next: "confirm_data" },
         { label: "Нет, спасибо, продлевать не буду", next: "neg_categorical" },
@@ -378,14 +114,10 @@
       ]
     },
     neg_wrong_person: {
-      group: "A", tag: "Не тот номер", terminal: true, endType: "neutral",
-      text: "Понял(а), значит данные в базе устарели — передам на уточнение. Хорошего дня!",
-      note: "Отметьте номер как нерелевантный/устаревший в базе, чтобы исключить повторный обзвон."
+      text: "Понял(а), значит данные в базе устарели — передам на уточнение. Хорошего дня!"
     },
     neg_previous_refusal: {
-      group: "A", tag: "Повторный контакт",
       text: "По данным вижу, что ранее уже был отказ от продления. Уточните, пожалуйста: ситуация как-то изменилась, или звонок неактуален и мне стоит завершить разговор?",
-      note: "Проверяйте историю контактов перед звонком. Если отказ был недавним и категоричным — сообщите ответственному за базу, чтобы номер не попадал в список повторно.",
       options: [
         { label: "Да, ситуация изменилась, слушаю", next: "confirm_data" },
         { label: "Нет, актуальность та же, не звоните", next: "neg_categorical" }
@@ -393,9 +125,7 @@
     },
 
     confirm_data: {
-      group: "B", tag: "Сверка данных",
       text: "Сверим данные: автомобиль [[марка/модель]] тот же, изменений по допущенным водителям не было? И подскажите, были ли за этот год страховые случаи?",
-      note: "Уточните убыточность за год — это может повлиять на условия продления. Поблагодарите клиента за то, что остаётся с компанией, без наигранности.",
       options: [
         { label: "Всё то же самое, случаев не было", next: "sum_discussion" },
         { label: "Есть изменения (автомобиль/водители)", next: "sum_discussion" },
@@ -404,18 +134,14 @@
       ]
     },
     claims_review: {
-      group: "B", tag: "Опыт по выплате",
       text: "Расскажите, пожалуйста, как прошло урегулирование — устроили сроки рассмотрения, размер выплаты и качество ремонта?",
-      note: "Внимательно выслушайте, прежде чем переходить к продлению. Это момент, от которого сильно зависит доверие к компании на следующий год.",
       options: [
         { label: "В целом всё устроило", next: "sum_discussion" },
         { label: "Были нарекания", next: "neg_bad_experience" }
       ]
     },
     renewal_hesitation: {
-      group: "B", tag: "Сомнение при продлении",
       text: "Подскажите, что именно вызывает сомнение: цена продления, опыт по страховому случаю, если он был, или, может быть, рассматриваете предложения других страховых компаний на этот год?",
-      note: "Дайте клиенту назвать конкретную причину и работайте с ней предметно: цена → расчёт с франшизой/другим продуктом; сервис → см. «Опыт по выплате»; конкуренты → ветка «Удержание».",
       options: [
         { label: "В основном цена выросла", next: "price_objection" },
         { label: "Рассматриваю другие страховые компании", next: "retention" },
@@ -425,9 +151,7 @@
     },
 
     retention: {
-      group: "C", tag: "Удержание — уточнение",
       text: "Понимаю, сравнить предложения — разумно. За время с нами уже сложилась история: оформленные документы, при необходимости — опыт урегулирования, привычные контакты, и никакого перерыва в защите, который возникает при смене страховщика. Что именно предлагают другие компании — более низкую цену или другие условия?",
-      note: "Не критикуйте конкурентов напрямую. Цель — понять, из-за чего сравнение, и ответить по существу, а не только словами.",
       options: [
         { label: "В основном дешевле", next: "price_objection" },
         { label: "Пришлю предложение, сравните", next: "compare_offer" },
@@ -436,33 +160,25 @@
       ]
     },
     compare_offer: {
-      group: "C", tag: "Сравнение предложений",
       text: "Пришлите, пожалуйста, предложение конкурента — сравню условия и отвечу честно, можем ли мы предложить сопоставимый или лучший вариант. Успею подготовить ответ до [[дата окончания полиса]]?",
-      note: "Зафиксируйте канал получения предложения (почта/WhatsApp) и точный срок ответа. Не затягивайте — решение нужно успеть принять до окончания действующего полиса.",
       options: [
         { label: "Хорошо, отправлю и жду ответа", next: "closing_soft" },
         { label: "Ладно, не буду сравнивать, продлеваем сейчас", next: "sum_discussion" }
       ]
     },
     value_claims: {
-      group: "C", tag: "Ценность ВСК",
       text: "Тогда обращу внимание на несколько моментов сервиса ВСК, которые уже действуют по вашему договору и сохранятся при продлении: круглосуточный колл-центр с информированием о статусе урегулирования на каждом этапе, ремонт на дилере или в сети мультисервиса по направлению страховщика, а по ряду повреждений — например, сколы и трещины стёкол — выплата без сбора справок.",
-      note: "Опирайтесь только на факты из продуктовой линейки, не обещайте сроков сверх регламента.",
       options: [
         { label: "Хорошо, буду продлевать", next: "sum_discussion" },
         { label: "Всё равно рассматриваю другие варианты", next: "retention_lost" }
       ]
     },
     retention_lost: {
-      group: "C", tag: "Клиент уходит", terminal: true, endType: "hard",
-      text: "Понимаю, решение за вами. Если планы изменятся до [[дата окончания полиса]] — буду на связи, обсудим варианты ещё раз. Спасибо за время, хорошего дня!",
-      note: "Зафиксируйте причину ухода максимально конкретно (цена конкурента/условия/другое) — это данные для анализа оттока. Если время до окончания полиса ещё есть, оставьте окно для повторного контакта ближе к дате."
+      text: "Понимаю, решение за вами. Если планы изменятся до [[дата окончания полиса]] — буду на связи, обсудим варианты ещё раз. Спасибо за время, хорошего дня!"
     },
 
     price_objection: {
-      group: "D", tag: "Возражение по цене",
       text: "Понимаю, цена — важный фактор. На стоимость продления могли повлиять несколько причин: общее изменение тарифов, статистика убыточности за год, изменение стоимости самого автомобиля. Можно снизить сумму за счёт франшизы, перейти на продукт с более узким набором рисков, либо, если это предусмотрено продуктом, оформить рассрочку. Соберём вариант под ваш бюджет?",
-      note: "Не обещайте скидку без расчёта. Объясните причину роста цены конкретно, а не общими словами — это снимает подозрение в произвольном завышении.",
       options: [
         { label: "Хорошо, пересчитайте", next: "sum_discussion" },
         { label: "Какие есть варианты подешевле?", next: "downgrade_options" },
@@ -471,9 +187,7 @@
       ]
     },
     downgrade_options: {
-      group: "D", tag: "Более дешёвый пакет",
       text: "Если приоритет — снизить стоимость, есть более точечные продукты: «Компакт» — защита при ДТП по вине установленных третьих лиц, угон — опцией, дешевле «Классики» до 80%; «Компакт минимум» — защита от виновников без ОСАГО, дешевле до 95%, без осмотра; «Компакт фикс» — похожий продукт, оформляется вместе с ОСАГО. Любой из них заметно снизит сумму по сравнению с текущим пакетом.",
-      note: "Предупредите, что при переходе на более узкий продукт часть рисков (например, угон или собственная вина) может перестать покрываться — сравните риски, а не только цену.",
       options: [
         { label: "Подходит, пересчитайте", next: "sum_discussion" },
         { label: "Всё равно дорого, продлевать не буду", next: "neg_dont_need" }
@@ -481,9 +195,7 @@
     },
 
     sum_discussion: {
-      group: "D", tag: "Расчёт условий",
       text: "Уточните: сохраняем страховую сумму на уровне прошлого года или пересматриваем по текущей стоимости автомобиля? Рассматриваете франшизу для снижения стоимости? И как удобнее оплатить — единовременно или, если продукт предусматривает, в рассрочку?",
-      note: "Для б/у автомобиля осмотр может не требоваться, если сумма не увеличивается, — сверьте с условиями конкретного продукта.",
       options: [
         { label: "Готов(а) продлевать, условия устраивают", next: "closing_success" },
         { label: "Нужно подумать / посоветоваться", next: "neg_thinking" },
@@ -493,7 +205,6 @@
       ]
     },
     price_after_calc: {
-      group: "D", tag: "Возражение по цене (расчёт)",
       text: "Можно снизить стоимость несколькими способами: увеличить франшизу, выбрать продукт с более узким набором рисков — например, вместо «Классики» рассмотреть «Компакт плюс» или «Компакт», — либо, если это применимо к продукту, оформить рассрочку. Давайте посмотрим, какой вариант подойдёт именно вам.",
       options: [
         { label: "Хорошо, пересчитайте с франшизой/другим продуктом", next: "sum_discussion" },
@@ -502,9 +213,7 @@
       ]
     },
     discount_demand: {
-      group: "D", tag: "Требование скидки",
       text: "Скидка по продукту фиксированная и указана в условиях — назначить её выше вручную я не могу, это вне моей компетенции. Но можно скорректировать итоговую стоимость через франшизу или выбор другого продукта линейки, если бюджет — приоритет.",
-      note: "Не обещайте эксклюзивных скидок «от себя». Если клиент настаивает и ситуация неоднозначная — предложите передать вопрос руководителю по внутреннему регламенту.",
       options: [
         { label: "Ладно, давайте через франшизу", next: "sum_discussion" },
         { label: "Тогда соедините с руководителем", next: "escalate" },
@@ -512,99 +221,50 @@
       ]
     },
     escalate: {
-      group: "D", tag: "Эскалация руководителю", terminal: true, endType: "soft",
-      text: "Хорошо, я передам ваш номер и запрос руководителю отдела, он свяжется с вами дополнительно. Уточните, пожалуйста, удобное время для звонка.",
-      note: "Зафиксируйте запрос и передайте руководителю до конца смены, не откладывайте. Запишите удобное время в заметки по звонку выше."
+      text: "Хорошо, я передам ваш номер и запрос руководителю отдела, он свяжется с вами дополнительно. Уточните, пожалуйста, удобное время для звонка."
     },
 
     neg_categorical: {
-      group: "E", tag: "Категорический отказ", terminal: true, endType: "hard",
-      text: "Понял(а) вас, спасибо за время. Уважаю ваше решение — больше не будем связываться по этому вопросу. Хорошего дня!",
-      note: "Обязательно зафиксируйте отказ от продления и просьбу не звонить в CRM/базе. Повторный звонок по этому вопросу недопустим."
+      text: "Понял(а) вас, спасибо за время. Уважаю ваше решение — больше не будем связываться по этому вопросу. Хорошего дня!"
     },
     neg_dont_need: {
-      group: "E", tag: "«Продлевать не буду»", terminal: true, endType: "hard",
-      text: "Понимаю, спасибо, что уделили время. Если решите вернуться — контакты ВСК есть в открытом доступе на сайте vsk.ru. Хорошего дня!",
-      note: "Не настаивайте повторно после чёткого отказа. Короткое доброжелательное завершение работает на репутацию компании лучше, чем повторная попытка."
+      text: "Понимаю, спасибо, что уделили время. Если решите вернуться — контакты ВСК есть в открытом доступе на сайте vsk.ru. Хорошего дня!"
     },
     neg_bad_experience: {
-      group: "E", tag: "Негативный опыт",
       text: "Мне жаль это слышать, и понятно, почему это повлияло на отношение к страхованию в целом. Расскажите, пожалуйста, что произошло — если это касалось ВСК, я передам информацию в соответствующий отдел, а если другой компании, поясню, чем наш подход к урегулированию отличается.",
-      note: "Не спорьте и не оправдывайтесь за компанию. Сначала выслушайте. Если жалоба на ВСК — зафиксируйте детали и предложите передать в поддержку по урегулированию убытков; не продавайте в этот момент.",
       options: [
         { label: "Ладно, расскажу подробнее", next: "value_claims" },
         { label: "Не хочу это обсуждать, просто не интересно", next: "neg_dont_need" }
       ]
     },
     neg_thinking: {
-      group: "E", tag: "«Нужно подумать»",
       text: "Конечно, это разумно. Чтобы было удобнее принять решение, отправлю краткие условия предложения — на почту или в WhatsApp, как удобнее. Когда можно перезвонить, чтобы уточнить решение — через два-три дня?",
-      note: "Всегда фиксируйте конкретную дату и канал повторного контакта — «подумаю» без даты почти всегда означает потерянный контакт. Отправьте материалы в тот же день.",
       options: [
         { label: "Хорошо, договорились", next: "closing_soft" },
         { label: "Не нужно перезванивать, я сам(а) свяжусь", next: "closing_soft" }
       ]
     },
     neg_aggressive: {
-      group: "E", tag: "Агрессия", terminal: true, endType: "hard",
-      text: "Понимаю ваше раздражение. Заканчиваю звонок, чтобы не усугублять — хорошего дня.",
-      note: "Не вступайте в спор и не отвечайте грубостью на грубость ни при каких обстоятельствах. Если клиент продолжает — вежливо попрощайтесь и завершите звонок, зафиксируйте инцидент по внутреннему регламенту."
+      text: "Понимаю ваше раздражение. Заканчиваю звонок, чтобы не усугублять — хорошего дня."
     },
     neg_ineligible: {
-      group: "E", tag: "Не подходит по условиям", terminal: true, endType: "neutral",
-      text: "По формальным условиям продукта, к сожалению, не смогу продлить полис на прежних условиях: [[уточнить причину — начали использовать как такси/каршеринг/доставку, изменилось число собственников, техническая неисправность]]. Уточню, какие варианты в вашем случае вообще возможны, и вернусь с ответом.",
-      note: "Не пытайтесь оформить полис в обход ограничений — заявка будет отклонена при проверке. Честно объясните причину клиенту, при необходимости передайте вопрос руководителю."
+      text: "По формальным условиям продукта, к сожалению, не смогу продлить полис на прежних условиях: [[уточнить причину — начали использовать как такси/каршеринг/доставку, изменилось число собственников, техническая неисправность]]. Уточню, какие варианты в вашем случае вообще возможны, и вернусь с ответом."
     },
 
     closing_success: {
-      group: "F", tag: "Успешное завершение", terminal: true, endType: "success",
-      text: "Отлично, оформляем продление. Данные по автомобилю и допущенным водителям у нас уже есть — пришлите только то, что изменилось: [[новые ВУ/СТС и т.п., если менялись]]. На какой номер или почту отправить реквизиты для оплаты и подтверждение?",
-      note: "Если менялась страховая сумма или продукт — сверьте итоговую стоимость до отправки реквизитов. Подтвердите способ оплаты и успейте оформить до [[дата окончания полиса]], чтобы не образовался перерыв в защите."
+      text: "Отлично, оформляем продление. Данные по автомобилю и допущенным водителям у нас уже есть — пришлите только то, что изменилось: [[новые ВУ/СТС и т.п., если менялись]]. На какой номер или почту отправить реквизиты для оплаты и подтверждение?"
     },
     closing_soft: {
-      group: "F", tag: "Мягкое завершение", terminal: true, endType: "soft",
-      text: "Хорошо, [[Имя Отчество]], тогда договорились — жду вашего решения [[дата/канал]]. Спасибо за время, хорошего дня!",
-      note: "Внесите договорённость в CRM с точной датой и способом связи. Перезвоните точно в срок и не позже [[дата окончания полиса]], чтобы не образовался перерыв в защите."
+      text: "Хорошо, [[Имя Отчество]], тогда договорились — жду вашего решения [[дата/канал]]. Спасибо за время, хорошего дня!"
     },
     closing_hard: {
-      group: "F", tag: "Отказ на этапе расчёта", terminal: true, endType: "hard",
-      text: "Понимаю, спасибо, что уделили время на разговор. Хорошего дня!",
-      note: "Даже при отказе — вежливое завершение. Зафиксируйте причину отказа от продления в CRM максимально конкретно (цена / не доверяет / не актуально / другое) — это данные для анализа оттока."
+      text: "Понимаю, спасибо, что уделили время на разговор. Хорошего дня!"
     }
   };
 
-  var GROUP_NAMES = {
-    A: "Начало разговора",
-    B: "Данные и опыт за год",
-    C: "Удержание от конкурентов",
-    D: "Цена и оформление",
-    E: "Возражения и негатив",
-    F: "Завершение звонка"
-  };
-  var GROUP_ORDER = ["A", "B", "C", "D", "E", "F"];
+  var history = ["start"];
 
-  var STORAGE_KEY = "kasko-script-state-v1";
-  var state = { history: ["start"], notes: {} };
-
-  function loadState() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      var parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.history) && parsed.history.length && NODES[parsed.history[parsed.history.length - 1]]) {
-        state.history = parsed.history.filter(function (id) { return !!NODES[id]; });
-        if (!state.history.length) state.history = ["start"];
-      }
-      if (parsed && parsed.notes && typeof parsed.notes === "object") {
-        state.notes = parsed.notes;
-      }
-    } catch (e) { /* ignore corrupted/inaccessible storage */ }
-  }
-  function saveState() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* private mode etc. */ }
-  }
-
-  function currentId() { return state.history[state.history.length - 1]; }
+  function currentId() { return history[history.length - 1]; }
 
   function renderText(t) {
     return t.replace(/\[\[([^\]]+)\]\]/g, '<span class="ph">$1</span>');
@@ -612,73 +272,28 @@
 
   function goTo(id) {
     if (!NODES[id]) return;
-    state.history.push(id);
-    saveState();
+    history.push(id);
     render();
   }
   function goBack() {
-    if (state.history.length > 1) { state.history.pop(); saveState(); render(); }
+    if (history.length > 1) { history.pop(); render(); }
   }
   function restart() {
-    state.history = ["start"];
-    saveState();
+    history = ["start"];
     render();
   }
 
-  function renderBreadcrumb() {
-    var el = document.getElementById("breadcrumb");
-    el.innerHTML = "";
-    state.history.forEach(function (id, i) {
-      var b = document.createElement("button");
-      b.className = "crumb" + (i === state.history.length - 1 ? " current" : "");
-      b.textContent = NODES[id].tag;
-      if (i !== state.history.length - 1) {
-        b.addEventListener("click", function () {
-          state.history = state.history.slice(0, i + 1);
-          saveState();
-          render();
-        });
-      }
-      el.appendChild(b);
-    });
-  }
-
-  function renderScriptPanel() {
+  function render() {
     var node = NODES[currentId()];
-    var el = document.getElementById("scriptPanel");
+    var el = document.getElementById("panel");
     el.innerHTML = "";
 
-    var tag = document.createElement("span");
-    tag.className = "tag tag-" + node.group;
-    tag.textContent = node.tag;
-    el.appendChild(tag);
+    var line = document.createElement("p");
+    line.className = "line";
+    line.innerHTML = renderText(node.text);
+    el.appendChild(line);
 
-    var quote = document.createElement("div");
-    quote.className = "quote";
-    quote.innerHTML = renderText(node.text);
-    el.appendChild(quote);
-
-    if (node.note) {
-      var note = document.createElement("div");
-      note.className = "opnote";
-      note.innerHTML = "<b>Подсказка:</b><span>" + renderText(node.note) + "</span>";
-      el.appendChild(note);
-    }
-
-    if (node.terminal) {
-      var panel = document.createElement("div");
-      panel.className = "endPanel " + (node.endType || "neutral");
-      var labels = { success: "Звонок завершён успешно", soft: "Звонок завершён, ожидается повторный контакт", hard: "Звонок завершён отказом", neutral: "Звонок завершён" };
-      panel.textContent = labels[node.endType] || labels.neutral;
-      el.appendChild(panel);
-
-      var restartBtn = document.createElement("button");
-      restartBtn.className = "primary";
-      restartBtn.style.marginTop = "12px";
-      restartBtn.textContent = "Новый звонок";
-      restartBtn.addEventListener("click", restart);
-      el.appendChild(restartBtn);
-    } else {
+    if (node.options && node.options.length) {
       var opts = document.createElement("div");
       opts.className = "options";
       node.options.forEach(function (opt) {
@@ -689,71 +304,19 @@
         opts.appendChild(b);
       });
       el.appendChild(opts);
+    } else {
+      var done = document.createElement("p");
+      done.className = "done";
+      done.textContent = "Звонок завершён.";
+      el.appendChild(done);
     }
-  }
 
-  function renderJumpTab() {
-    var el = document.getElementById("tab-jump");
-    el.innerHTML = "";
-    GROUP_ORDER.forEach(function (g) {
-      var wrap = document.createElement("div");
-      wrap.className = "jumpGroup";
-      var h = document.createElement("h3");
-      h.textContent = GROUP_NAMES[g];
-      wrap.appendChild(h);
-      Object.keys(NODES).forEach(function (id) {
-        if (NODES[id].group !== g) return;
-        var b = document.createElement("button");
-        b.className = "jumpBtn" + (id === currentId() ? " active" : "");
-        b.textContent = NODES[id].tag;
-        b.addEventListener("click", function () { goTo(id); });
-        wrap.appendChild(b);
-      });
-      el.appendChild(wrap);
-    });
-  }
-
-  function render() {
-    renderBreadcrumb();
-    renderScriptPanel();
-    renderJumpTab();
-    document.getElementById("btnBack").disabled = state.history.length <= 1;
+    document.getElementById("btnBack").disabled = history.length <= 1;
   }
 
   document.getElementById("btnBack").addEventListener("click", goBack);
   document.getElementById("btnRestart").addEventListener("click", restart);
 
-  var tabs = document.getElementById("tabs");
-  tabs.addEventListener("click", function (e) {
-    var btn = e.target.closest(".tabBtn");
-    if (!btn) return;
-    Array.prototype.forEach.call(tabs.querySelectorAll(".tabBtn"), function (b) { b.classList.toggle("active", b === btn); });
-    ["jump", "techniques", "products", "docs", "rules"].forEach(function (t) {
-      document.getElementById("tab-" + t).hidden = (t !== btn.dataset.tab);
-    });
-  });
-
-  var noteFields = ["fClient", "fCar", "fInsurer", "fEnd", "fNotes"];
-  function loadNotes() {
-    noteFields.forEach(function (id) {
-      var v = state.notes[id];
-      if (v) document.getElementById(id).value = v;
-    });
-  }
-  noteFields.forEach(function (id) {
-    document.getElementById(id).addEventListener("input", function (e) {
-      state.notes[id] = e.target.value;
-      saveState();
-    });
-  });
-  document.getElementById("btnClearNotes").addEventListener("click", function () {
-    state.notes = {};
-    noteFields.forEach(function (id) { document.getElementById(id).value = ""; });
-    saveState();
-  });
-
-  loadState();
-  loadNotes();
   render();
 })();
 </script>
