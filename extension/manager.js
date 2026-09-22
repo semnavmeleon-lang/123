@@ -40,6 +40,8 @@ const SELECTOR_ROLES = [
 ];
 
 let fileHandle = null;
+let sourceBuf = null;
+let sourceFileName = null;
 let workbook = null;
 let sheetName = null;
 let sheet = null;
@@ -117,19 +119,14 @@ async function openFile() {
     throw err;
   }
 
-  fileHandle = handle;
-
-  const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
-  if (permission !== 'granted') {
-    fileHandle = null;
-    throw new Error('Нет разрешения на запись в файл — откройте файл заново и разрешите запись');
-  }
-
-  const file = await fileHandle.getFile();
+  const file = await handle.getFile();
+  sourceFileName = file.name;
   els.fileName.textContent = file.name;
-  const buf = await file.arrayBuffer();
-  workbook = XLSX.read(buf, { type: 'array', cellStyles: true });
-  cellWriter = await XlsxCellWriter.open(buf);
+  sourceBuf = await file.arrayBuffer();
+  workbook = XLSX.read(sourceBuf, { type: 'array', cellStyles: true });
+
+  fileHandle = null;
+  cellWriter = null;
 
   els.sheetSelect.innerHTML = '';
   workbook.SheetNames.forEach((name) => {
@@ -142,14 +139,44 @@ async function openFile() {
   sheetName = workbook.SheetNames[0];
   els.sheetSelect.value = sheetName;
   await onSheetChange();
-  log(`Открыт файл: ${file.name}`, 'ok');
+  log(`Источник открыт: ${file.name} (сам файл не меняется — результат сохранится в отдельный новый файл)`, 'ok');
 }
 
 async function onSheetChange() {
   sheetName = els.sheetSelect.value;
   sheet = workbook.Sheets[sheetName];
   await populateColumnSelects();
+  if (cellWriter) await cellWriter.useSheet(sheetName);
+}
+
+function suggestOutputName(name) {
+  const dot = name.lastIndexOf('.');
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '.xlsx';
+  return `${base} — результаты${ext}`;
+}
+
+async function ensureOutputFile() {
+  if (fileHandle) return;
+
+  const handle = await window.showSaveFilePicker({
+    suggestedName: suggestOutputName(sourceFileName),
+    types: [{
+      description: 'Excel',
+      accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+    }],
+  });
+
+  cellWriter = await XlsxCellWriter.open(sourceBuf);
   await cellWriter.useSheet(sheetName);
+  const initialBytes = await cellWriter.toBytes();
+  const writable = await handle.createWritable();
+  await writable.write(initialBytes);
+  await writable.close();
+
+  fileHandle = handle;
+  const outputFile = await handle.getFile();
+  log(`Результат будет сохраняться в новый файл: ${outputFile.name}`, 'ok');
 }
 
 async function populateColumnSelects() {
@@ -238,10 +265,14 @@ function extractRows() {
 
 async function persistResult(resultRef, text) {
   if (!fileHandle || !cellWriter) {
-    throw new Error('Файл недоступен (страница панели могла перезагрузиться) — откройте файл заново и запустите проверку с начала');
+    fileHandle = null;
+    cellWriter = null;
+    throw new Error('Файл результата недоступен (страница панели могла перезагрузиться) — запустите проверку заново, будет предложено выбрать файл результата снова');
   }
   if ((await fileHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
-    throw new Error('Пропало разрешение на запись в файл (могло быть отозвано в настройках сайта) — откройте файл заново');
+    fileHandle = null;
+    cellWriter = null;
+    throw new Error('Пропало разрешение на запись в файл результата — запустите проверку заново, будет предложено выбрать файл результата снова');
   }
   cellWriter.setCell(resultRef, text);
   const bytes = await cellWriter.toBytes();
@@ -465,6 +496,13 @@ function waitForContentReady(timeout = 15000) {
 async function startRun() {
   if (!sheet) return log('Сначала откройте файл', 'error');
   if (policyColIdx == null || resultColIdx == null) return log('Выберите колонки', 'error');
+
+  try {
+    await ensureOutputFile();
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // пользователь закрыл диалог сохранения
+    return log(`Не удалось создать файл результата: ${err.message || err}`, 'error');
+  }
 
   queue = extractRows();
   if (queue.length === 0) {
