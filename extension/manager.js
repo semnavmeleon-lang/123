@@ -212,12 +212,13 @@ function extractRows() {
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
     const policyRef = XLSX.utils.encode_cell({ r, c: policyColIdx });
     const policyCell = sheet[policyRef];
-    const value = policyCell ? String(policyCell.v).trim() : '';
+    const value = policyCell && policyCell.v != null ? String(policyCell.v).trim() : '';
     if (!value) continue;
 
     const resultRef = XLSX.utils.encode_cell({ r, c: resultColIdx });
     const resultCell = sheet[resultRef];
-    if (isCellColored(resultCell) || isCellCommented(resultCell)) {
+    const resultText = resultCell && resultCell.v != null ? String(resultCell.v).trim() : '';
+    if (resultText || isCellColored(resultCell) || isCellCommented(resultCell)) {
       skippedByFilter++;
       continue;
     }
@@ -459,7 +460,7 @@ async function startRun() {
   if (queue.length === 0) {
     if (queue.skippedByFilter > 0) {
       return log(
-        `В выбранной колонке нет строк для проверки: ${queue.skippedByFilter} найдено, но у всех ячейка результата уже закрашена или содержит комментарий — они считаются обработанными. Если это не так, проверьте выбранную колонку результата или сбросьте заливку/комментарии.`,
+        `В выбранной колонке нет строк для проверки: ${queue.skippedByFilter} найдено, но у всех ячейка результата уже заполнена, закрашена или содержит комментарий — они считаются обработанными (в том числе из прошлого незавершённого прогона). Если нужно перепроверить их заново — очистите нужные ячейки результата.`,
         'error'
       );
     }
