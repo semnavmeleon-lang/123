@@ -118,6 +118,13 @@ async function openFile() {
   }
 
   fileHandle = handle;
+
+  const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
+  if (permission !== 'granted') {
+    fileHandle = null;
+    throw new Error('Нет разрешения на запись в файл — откройте файл заново и разрешите запись');
+  }
+
   const file = await fileHandle.getFile();
   els.fileName.textContent = file.name;
   const buf = await file.arrayBuffer();
@@ -232,6 +239,9 @@ function extractRows() {
 async function persistResult(resultRef, text) {
   if (!fileHandle || !cellWriter) {
     throw new Error('Файл недоступен (страница панели могла перезагрузиться) — откройте файл заново и запустите проверку с начала');
+  }
+  if ((await fileHandle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
+    throw new Error('Пропало разрешение на запись в файл (могло быть отозвано в настройках сайта) — откройте файл заново');
   }
   cellWriter.setCell(resultRef, text);
   const bytes = await cellWriter.toBytes();
