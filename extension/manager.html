@@ -63,6 +63,11 @@
       <label>Результат пролонгации:</label>
       <select id="resultColSelect" disabled></select>
     </div>
+    <div class="muted">
+      В работу берутся только строки, где ячейка результата ничем не
+      закрашена и не содержит комментария — остальные считаются уже
+      обработанными и пропускаются.
+    </div>
   </div>
 
   <div class="card">
@@ -102,6 +107,9 @@
 </div>
 
 <script src="lib/xlsx.full.min.js"></script>
+<script src="lib/jszip.min.js"></script>
+<script src="lib/xlsx-cell-writer.js"></script>
+<script src="shared.js"></script>
 <script src="manager.js"></script>
 </body>
 </html>

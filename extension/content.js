@@ -1,6 +1,3 @@
-const RESULT_WAIT_MS = 120000;
-const FORM_WAIT_MS = 60000;
-
 let lastHighlighted = null;
 let pickCallback = null;
 
@@ -40,8 +37,8 @@ async function main() {
 
 async function runFormPhase(run, config) {
   const sel = config.selectors || {};
-  if (!sel.checkbox || !sel.input || !sel.findBtn || !sel.continueBtn) {
-    reportError(run, new Error('Не назначены все элементы формы (чекбокс / поле полиса / «Найти» / «Продолжить») — сделайте это в панели'));
+  if (!sel.checkbox || !sel.input || !sel.findBtn || !sel.continueBtnInactive || !sel.continueBtnActive) {
+    reportError(run, new Error('Не назначены все элементы формы (чекбокс / поле полиса / «Найти» / «Продолжить» неактивная и активная) — сделайте это в панели'));
     return;
   }
 
@@ -53,8 +50,7 @@ async function runFormPhase(run, config) {
   setNativeValue(input, run.policyNumber);
   findBtn.click();
 
-  const continueBtn = await waitForElement(sel.continueBtn.selector, FORM_WAIT_MS);
-  await waitForEnabled(continueBtn, FORM_WAIT_MS);
+  const continueBtn = await waitForElement(sel.continueBtnActive.selector, FORM_WAIT_MS);
 
   const nextRun = { ...run, phase: 'awaiting-result' };
   await chrome.storage.local.set({ run: nextRun });
@@ -180,33 +176,6 @@ function waitForAny(selectors, timeout) {
       ? setTimeout(() => {
           cleanup();
           reject(new Error('Ни один из ожидаемых результатов не появился'));
-        }, timeout)
-      : null;
-
-    function cleanup() {
-      observer.disconnect();
-      if (timer) clearTimeout(timer);
-    }
-  });
-}
-
-function waitForEnabled(el, timeout) {
-  const isReady = () => !el.disabled && el.getAttribute('aria-disabled') !== 'true';
-  return new Promise((resolve, reject) => {
-    if (isReady()) return resolve(el);
-
-    const observer = new MutationObserver(() => {
-      if (isReady()) {
-        cleanup();
-        resolve(el);
-      }
-    });
-    observer.observe(el, { attributes: true, attributeFilter: ['disabled', 'aria-disabled'] });
-
-    const timer = timeout
-      ? setTimeout(() => {
-          cleanup();
-          reject(new Error('Кнопка «Продолжить» не разблокировалась'));
         }, timeout)
       : null;
 

@@ -20,10 +20,16 @@ const SELECTOR_ROLES = [
     instruction: 'Кликните по кнопке «Найти» (нажимается сразу после ввода номера полиса)',
   },
   {
-    key: 'continueBtn',
-    label: 'Кнопка «Продолжить»',
+    key: 'continueBtnInactive',
+    label: 'Кнопка «Продолжить» (неактивная)',
     navigate: true,
-    instruction: 'Кликните по кнопке «Продолжить»',
+    instruction: 'Кликните по кнопке «Продолжить», пока она ещё неактивна (сразу после «Найти»)',
+  },
+  {
+    key: 'continueBtnActive',
+    label: 'Кнопка «Продолжить» (активная)',
+    navigate: true,
+    instruction: 'Кликните по кнопке «Продолжить», когда она уже активна (данные подтянулись)',
   },
   {
     key: 'priceResult',
@@ -43,6 +49,7 @@ let fileHandle = null;
 let workbook = null;
 let sheetName = null;
 let sheet = null;
+let cellWriter = null;
 
 let policyColIdx = null;
 let resultColIdx = null;
@@ -109,7 +116,8 @@ async function openFile() {
   const file = await fileHandle.getFile();
   els.fileName.textContent = file.name;
   const buf = await file.arrayBuffer();
-  workbook = XLSX.read(buf, { type: 'array' });
+  workbook = XLSX.read(buf, { type: 'array', cellStyles: true });
+  cellWriter = await XlsxCellWriter.open(buf);
 
   els.sheetSelect.innerHTML = '';
   workbook.SheetNames.forEach((name) => {
@@ -129,6 +137,7 @@ async function onSheetChange() {
   sheetName = els.sheetSelect.value;
   sheet = workbook.Sheets[sheetName];
   await populateColumnSelects();
+  await cellWriter.useSheet(sheetName);
 }
 
 async function populateColumnSelects() {
@@ -173,33 +182,38 @@ function readHeaders(sheet) {
   return headers;
 }
 
+function isCellColored(cell) {
+  return !!(cell && cell.s && cell.s.patternType && cell.s.patternType !== 'none');
+}
+
+function isCellCommented(cell) {
+  return !!(cell && Array.isArray(cell.c) && cell.c.length > 0);
+}
+
 function extractRows() {
   const range = XLSX.utils.decode_range(sheet['!ref']);
   const rows = [];
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
-    const ref = XLSX.utils.encode_cell({ r, c: policyColIdx });
-    const cell = sheet[ref];
-    const value = cell ? String(cell.v).trim() : '';
+    const policyRef = XLSX.utils.encode_cell({ r, c: policyColIdx });
+    const policyCell = sheet[policyRef];
+    const value = policyCell ? String(policyCell.v).trim() : '';
     if (!value) continue;
-    rows.push({ id: `row-${r}`, rowIndex: r, policyNumber: value });
+
+    const resultRef = XLSX.utils.encode_cell({ r, c: resultColIdx });
+    const resultCell = sheet[resultRef];
+    if (isCellColored(resultCell) || isCellCommented(resultCell)) continue;
+
+    rows.push({ id: `row-${r}`, rowIndex: r, policyNumber: value, resultRef });
   }
   return rows;
 }
 
-function writeResult(rowIndex, text) {
-  const ref = XLSX.utils.encode_cell({ r: rowIndex, c: resultColIdx });
-  sheet[ref] = { t: 's', v: text };
-  const range = XLSX.utils.decode_range(sheet['!ref']);
-  range.e.r = Math.max(range.e.r, rowIndex);
-  range.e.c = Math.max(range.e.c, resultColIdx);
-  sheet['!ref'] = XLSX.utils.encode_range(range);
-}
-
-async function persist() {
-  if (!fileHandle) return;
-  const out = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+async function persistResult(resultRef, text) {
+  if (!fileHandle || !cellWriter) return;
+  cellWriter.setCell(resultRef, text);
+  const bytes = await cellWriter.toBytes();
   const writable = await fileHandle.createWritable();
-  await writable.write(out);
+  await writable.write(bytes);
   await writable.close();
 }
 
@@ -308,6 +322,18 @@ async function saveSelector(role, picked) {
   await setConfig(config);
   await refreshSelectorDots();
   log(`Назначено (${role}): ${picked.meta}`, 'ok');
+  warnIfContinueSelectorsMatch(config);
+}
+
+function warnIfContinueSelectorsMatch(config) {
+  const inactive = config.selectors.continueBtnInactive;
+  const active = config.selectors.continueBtnActive;
+  if (inactive && active && inactive.selector === active.selector) {
+    log(
+      'Внимание: неактивная и активная «Продолжить» дали одинаковый селектор — по нему нельзя будет отличить состояния, кнопка будет нажата сразу, как только появится. Переназначьте, кликнув точнее (например, по элементу, у которого меняется класс/текст между состояниями).',
+      'warn'
+    );
+  }
 }
 
 async function resetSelector(role) {
@@ -335,7 +361,13 @@ async function ensureWorkingTab() {
       workingTabId = null;
       if (running) {
         running = false;
+        clearRowTimeout();
         log('Рабочая вкладка закрыта — цикл остановлен', 'error');
+        if (currentRow) {
+          persistResult(currentRow.resultRef, 'Ошибка: рабочая вкладка была закрыта до получения результата').catch(
+            (e) => log(`Не удалось сохранить файл: ${e.message || e}`, 'error')
+          );
+        }
         updateRunButtons();
       }
       chrome.tabs.onRemoved.removeListener(handler);
@@ -386,9 +418,30 @@ async function startRun() {
 
 function stopRun() {
   running = false;
+  clearRowTimeout();
   chrome.storage.local.set({ run: { active: false, phase: 'idle' } });
   updateRunButtons();
   log('Остановлено пользователем', 'warn');
+}
+
+let rowTimeoutId = null;
+
+function armRowTimeout(row) {
+  clearRowTimeout();
+  rowTimeoutId = setTimeout(() => {
+    if (!currentRow || currentRow.id !== row.id) return;
+    handleRowDone(
+      `Ошибка: нет ответа за ${Math.round(ROW_TIMEOUT_MS / 1000)} c — вкладка не ответила (зависла или ушла на непредвиденную страницу)`,
+      'error'
+    );
+  }, ROW_TIMEOUT_MS);
+}
+
+function clearRowTimeout() {
+  if (rowTimeoutId) {
+    clearTimeout(rowTimeoutId);
+    rowTimeoutId = null;
+  }
 }
 
 function updateRunButtons() {
@@ -421,6 +474,7 @@ async function processNext() {
     },
   });
   await navigateWorkingTab(START_URL);
+  armRowTimeout(currentRow);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
@@ -434,6 +488,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     handleRowDone(`Ошибка: ${msg.message}`, 'error');
   } else if (msg.type === 'NEED_TEACH') {
     running = false;
+    clearRowTimeout();
     updateRunButtons();
     log(`Строка ${currentRow.rowIndex + 1}: появился новый вариант результата — кликните по нему в рабочей вкладке`, 'warn');
     showTeachPrompt();
@@ -445,13 +500,17 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
 });
 
-function handleRowDone(text, level) {
-  writeResult(currentRow.rowIndex, text);
-  persist().catch((e) => log(`Не удалось сохранить файл: ${e.message || e}`, 'error'));
+async function handleRowDone(text, level) {
+  clearRowTimeout();
+  try {
+    await persistResult(currentRow.resultRef, text);
+  } catch (e) {
+    log(`Не удалось сохранить файл: ${e.message || e}`, 'error');
+  }
   log(`Строка ${currentRow.rowIndex + 1}: ${text}`, level);
   queueIndex++;
   updateProgress();
-  processNext();
+  await processNext();
 }
 
 function showTeachPrompt() {
@@ -477,7 +536,7 @@ async function confirmTeachRole(role) {
 
   running = true;
   updateRunButtons();
-  handleRowDone(teach.text, role === 'price' ? 'ok' : 'warn');
+  await handleRowDone(teach.text, role === 'price' ? 'ok' : 'warn');
 }
 
 function log(text, level) {
