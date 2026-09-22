@@ -6,6 +6,7 @@ const SELECTOR_ROLES = [
     label: 'Чекбокс «Предыдущий полис ВСК»',
     navigate: true,
     instruction: 'Кликните по галочке «Предыдущий полис ВСК» в рабочей вкладке',
+    skippable: true,
   },
   {
     key: 'input',
@@ -246,6 +247,7 @@ function renderSelectorRows() {
       <span class="sel-label">${role.label}</span>
       <button class="secondary assign-btn" data-role="${role.key}">Назначить</button>
       <button class="secondary reset-btn" data-role="${role.key}">Сбросить</button>
+      ${role.skippable ? `<label class="muted"><input type="checkbox" class="skip-toggle" data-role="${role.key}"> Пропускать этот шаг</label>` : ''}
       <span class="muted sel-meta" id="meta-${role.key}"></span>
     `;
     els.selectorRows.appendChild(row);
@@ -260,17 +262,41 @@ function renderSelectorRows() {
       resetSelector(resetBtn.dataset.role);
     }
   });
+
+  els.selectorRows.addEventListener('change', (e) => {
+    const toggle = e.target.closest('.skip-toggle');
+    if (toggle) setSkip(toggle.dataset.role, toggle.checked).catch((err) => log(String(err.message || err), 'error'));
+  });
+}
+
+async function setSkip(role, skipped) {
+  const config = await getConfig();
+  config.skip = config.skip || {};
+  config.skip[role] = skipped;
+  await setConfig(config);
+  await refreshSelectorDots();
+  const roleDef = SELECTOR_ROLES.find((r) => r.key === role);
+  log(`${skipped ? 'Пропуск включён' : 'Пропуск выключен'} для «${roleDef ? roleDef.label : role}»`, 'info');
 }
 
 async function refreshSelectorDots() {
   const config = await getConfig();
   const sel = config.selectors || {};
+  const skip = config.skip || {};
   SELECTOR_ROLES.forEach((role) => {
+    const skipped = !!(role.skippable && skip[role.key]);
     const dot = document.getElementById(`dot-${role.key}`);
     const metaEl = document.getElementById(`meta-${role.key}`);
     const entry = sel[role.key];
-    if (dot) dot.classList.toggle('ok', !!entry);
-    if (metaEl) metaEl.textContent = entry && entry.meta ? entry.meta : '';
+    if (dot) dot.classList.toggle('ok', skipped || !!entry);
+    if (metaEl) metaEl.textContent = skipped ? 'шаг пропускается' : entry && entry.meta ? entry.meta : '';
+
+    const toggle = document.querySelector(`.skip-toggle[data-role="${role.key}"]`);
+    if (toggle) toggle.checked = skipped;
+    const assignBtn = document.querySelector(`.assign-btn[data-role="${role.key}"]`);
+    const resetBtn = document.querySelector(`.reset-btn[data-role="${role.key}"]`);
+    if (assignBtn) assignBtn.disabled = skipped;
+    if (resetBtn) resetBtn.disabled = skipped;
   });
 }
 

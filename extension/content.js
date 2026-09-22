@@ -37,16 +37,24 @@ async function main() {
 
 async function runFormPhase(run, config) {
   const sel = config.selectors || {};
-  if (!sel.checkbox || !sel.input || !sel.findBtn || !sel.continueBtnInactive || !sel.continueBtnActive) {
-    reportError(run, new Error('Не назначены все элементы формы (чекбокс / поле полиса / «Найти» / «Продолжить» неактивная и активная) — сделайте это в панели'));
+  const skip = config.skip || {};
+
+  const missing = [];
+  if (!skip.checkbox && !sel.checkbox) missing.push('чекбокс «Предыдущий полис ВСК»');
+  if (!sel.input) missing.push('поле ввода полиса');
+  if (!sel.findBtn) missing.push('кнопка «Найти»');
+  if (!sel.continueBtnInactive) missing.push('«Продолжить» (неактивная)');
+  if (!sel.continueBtnActive) missing.push('«Продолжить» (активная)');
+  if (missing.length > 0) {
+    reportError(run, new Error(`Не назначены элементы формы: ${missing.join(', ')} — сделайте это в панели`));
     return;
   }
 
-  const checkbox = await waitForElement(sel.checkbox.selector, FORM_WAIT_MS);
+  const checkbox = skip.checkbox ? null : await waitForElement(sel.checkbox.selector, FORM_WAIT_MS);
   const input = await waitForElement(sel.input.selector, FORM_WAIT_MS);
   const findBtn = await waitForElement(sel.findBtn.selector, FORM_WAIT_MS);
 
-  if (!checkbox.checked) checkbox.click();
+  if (checkbox && !checkbox.checked) checkbox.click();
   setNativeValue(input, run.policyNumber);
   findBtn.click();
 
