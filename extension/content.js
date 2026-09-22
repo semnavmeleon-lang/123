@@ -1,9 +1,3 @@
-// content.js — работает на lka.vsk.ru.
-// Два независимых режима:
-//   1) автономный прогон проверки (управляется через chrome.storage.local, ключ "run"),
-//      переживает полную навигацию/перезагрузку страницы между шагами;
-//   2) режим "укажи элемент мышью" — для настройки селекторов из панели управления.
-
 const RESULT_WAIT_MS = 120000;
 const FORM_WAIT_MS = 60000;
 
@@ -20,7 +14,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         role: msg.role,
         selector: buildSelector(el),
         meta: describeElement(el),
-        state: getElementState(el),
       });
     });
     sendResponse({ ok: true });
@@ -45,9 +38,6 @@ async function main() {
   }
 }
 
-// ---------- фаза заполнения формы ----------
-// Чекбокс -> номер полиса -> "Найти" -> ждём разблокировки "Продолжить" -> "Продолжить".
-
 async function runFormPhase(run, config) {
   const sel = config.selectors || {};
   if (!sel.checkbox || !sel.input || !sel.findBtn || !sel.continueBtn) {
@@ -63,28 +53,16 @@ async function runFormPhase(run, config) {
   setNativeValue(input, run.policyNumber);
   findBtn.click();
 
-  // "Продолжить" может не существовать/быть неактуальным до клика по "Найти" —
-  // ищем его заново уже после клика, а не заранее.
   const continueBtn = await waitForElement(sel.continueBtn.selector, FORM_WAIT_MS);
+  await waitForEnabled(continueBtn, FORM_WAIT_MS);
 
-  // Готовность определяется не по HTML-атрибуту disabled (сайт может блокировать
-  // кнопку классом/aria-disabled), а по совпадению с состоянием, которое сам
-  // пользователь один раз показал как "разблокировано, данные подтянулись".
-  await waitForButtonState(continueBtn, sel.continueBtn.unblockedState, FORM_WAIT_MS);
-
-  // Переключаем фазу ДО клика: если клик вызовет полную навигацию, новый
-  // экземпляр content.js на следующей странице продолжит именно с этого места.
   const nextRun = { ...run, phase: 'awaiting-result' };
   await chrome.storage.local.set({ run: nextRun });
 
   continueBtn.click();
 
-  // Если навигации не случилось (SPA-обновление в том же документе) —
-  // этот же скрипт сам дождётся результата.
   await runResultPhase(nextRun, config);
 }
-
-// ---------- фаза ожидания результата ----------
 
 async function runResultPhase(run, config) {
   const sel = config.selectors || {};
@@ -102,7 +80,6 @@ async function runResultPhase(run, config) {
     match = await waitForAny(known.map((k) => k.selector), RESULT_WAIT_MS);
   } catch {
     if (known.length < 2) {
-      // Скорее всего сейчас произошёл второй, ещё не изученный вариант исхода.
       requestTeach(run);
       return;
     }
@@ -124,7 +101,6 @@ function requestTeach(run) {
       selector: buildSelector(el),
       text: textOf(el),
       meta: describeElement(el),
-      state: getElementState(el),
     });
   });
 }
@@ -142,10 +118,6 @@ function reportError(run, err) {
 function textOf(el) {
   return (el.innerText || el.textContent || '').trim();
 }
-
-// ---------- ожидание элементов: MutationObserver, а не фиксированные таймеры ----------
-// timeout здесь — только защитная верхняя граница на случай реального сбоя страницы,
-// а не способ определить, что элемент "готов".
 
 function isVisible(el) {
   if (!el) return false;
@@ -218,25 +190,23 @@ function waitForAny(selectors, timeout) {
   });
 }
 
-// Сравнение с состоянием кнопки "Продолжить", которое пользователь один раз
-// показал как "разблокировано" (см. getElementState). Не полагается на то,
-// что сайт использует именно HTML-атрибут disabled.
-function waitForButtonState(el, targetState, timeout) {
+function waitForEnabled(el, timeout) {
+  const isReady = () => !el.disabled && el.getAttribute('aria-disabled') !== 'true';
   return new Promise((resolve, reject) => {
-    if (!targetState || statesEqual(getElementState(el), targetState)) return resolve(el);
+    if (isReady()) return resolve(el);
 
     const observer = new MutationObserver(() => {
-      if (statesEqual(getElementState(el), targetState)) {
+      if (isReady()) {
         cleanup();
         resolve(el);
       }
     });
-    observer.observe(el, { attributes: true, attributeFilter: ['disabled', 'class', 'aria-disabled'] });
+    observer.observe(el, { attributes: true, attributeFilter: ['disabled', 'aria-disabled'] });
 
     const timer = timeout
       ? setTimeout(() => {
           cleanup();
-          reject(new Error('Кнопка «Продолжить» не перешла в разблокированное состояние (данные полиса не подтянулись)'));
+          reject(new Error('Кнопка «Продолжить» не разблокировалась'));
         }, timeout)
       : null;
 
@@ -246,8 +216,6 @@ function waitForButtonState(el, targetState, timeout) {
     }
   });
 }
-
-// ---------- ввод значения так, чтобы его заметили React/Vue/Angular ----------
 
 function setNativeValue(el, value) {
   const proto = Object.getPrototypeOf(el);
@@ -260,8 +228,6 @@ function setNativeValue(el, value) {
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
-
-// ---------- режим "укажи элемент мышью" ----------
 
 function enterPickMode(onPick) {
   exitPickMode();
@@ -312,8 +278,6 @@ function handleEscape(e) {
   }
 }
 
-// ---------- устойчивый CSS-селектор по кликнутому элементу ----------
-
 function buildSelector(el) {
   if (el.id) return `#${CSS.escape(el.id)}`;
 
@@ -345,19 +309,4 @@ function describeElement(el) {
   const type = el.getAttribute('type') ? `[type="${el.getAttribute('type')}"]` : '';
   const text = textOf(el).slice(0, 40);
   return `${tag}${id}${name}${type}${text ? ' "' + text + '"' : ''}`;
-}
-
-// Снимок состояния элемента (для кнопки "Продолжить": заблокировано/разблокировано).
-// Три общих, ничего не предполагающих о конкретной вёрстке сигнала — какой из них
-// реально меняется на сайте, не важно: сравнение идёт по всем сразу.
-function getElementState(el) {
-  return {
-    disabled: !!el.disabled,
-    className: el.className || '',
-    ariaDisabled: el.getAttribute('aria-disabled'),
-  };
-}
-
-function statesEqual(a, b) {
-  return !!a && !!b && a.disabled === b.disabled && a.className === b.className && a.ariaDisabled === b.ariaDisabled;
 }

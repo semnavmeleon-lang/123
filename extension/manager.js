@@ -21,9 +21,9 @@ const SELECTOR_ROLES = [
   },
   {
     key: 'continueBtn',
-    label: 'Кнопка «Продолжить» (2 клика)',
+    label: 'Кнопка «Продолжить»',
     navigate: true,
-    instruction: null, // особый флоу с двумя кликами — см. assignContinueButton()
+    instruction: 'Кликните по кнопке «Продолжить»',
   },
   {
     key: 'priceResult',
@@ -91,8 +91,6 @@ function wireUi() {
   els.teachImpossibleBtn.addEventListener('click', () => confirmTeachRole('impossible').catch((e) => log(String(e.message || e), 'error')));
 }
 
-// ---------- файл ----------
-
 async function openFile() {
   let handle;
   try {
@@ -103,7 +101,7 @@ async function openFile() {
       }],
     });
   } catch (err) {
-    if (err && err.name === 'AbortError') return; // пользователь закрыл диалог
+    if (err && err.name === 'AbortError') return;
     throw err;
   }
 
@@ -205,8 +203,6 @@ async function persist() {
   await writable.close();
 }
 
-// ---------- настройки колонок (chrome.storage.local) ----------
-
 async function getColumnPrefs() {
   const { columnPrefs } = await chrome.storage.local.get('columnPrefs');
   return columnPrefs || {};
@@ -217,8 +213,6 @@ async function saveColumnPrefs() {
   const resultHeader = headers.find((h) => h.colIndex === resultColIdx)?.title;
   await chrome.storage.local.set({ columnPrefs: { policyHeader, resultHeader } });
 }
-
-// ---------- селекторы: назначение и сброс по отдельности ----------
 
 async function getConfig() {
   const { config } = await chrome.storage.local.get('config');
@@ -279,13 +273,9 @@ async function assignSelector(role) {
       await navigateWorkingTab(START_URL);
       await waitForContentReady();
     }
-    if (role === 'continueBtn') {
-      await assignContinueButton();
-    } else {
-      log(roleDef.instruction, 'info');
-      const picked = await pickOnce(role);
-      await saveSelector(role, picked);
-    }
+    log(roleDef.instruction, 'info');
+    const picked = await pickOnce(role);
+    await saveSelector(role, picked);
   } catch (err) {
     log(`Не удалось назначить «${roleDef.label}»: ${err.message || err}`, 'error');
   } finally {
@@ -293,34 +283,12 @@ async function assignSelector(role) {
   }
 }
 
-// "Продолжить" учится двумя кликами по одной и той же кнопке: пока она ещё
-// заблокирована (сразу после "Найти"), и когда уже разблокирована (данные
-// подтянулись). Так готовность определяется по факту, а не по предположению,
-// что сайт использует HTML-атрибут disabled.
-async function assignContinueButton() {
-  log('Шаг 1/2: кликните по кнопке «Продолжить», пока она ещё ЗАБЛОКИРОВАНА (сразу после «Найти», до загрузки данных полиса)', 'info');
-  const blocked = await pickOnce('continueBtn');
-  log('Шаг 2/2: кликните по ТОЙ ЖЕ кнопке «Продолжить», когда она станет РАЗБЛОКИРОВАНА (данные подтянулись)', 'info');
-  const unblocked = await pickOnce('continueBtn');
-
-  const config = await getConfig();
-  config.selectors.continueBtn = {
-    selector: unblocked.selector,
-    meta: unblocked.meta,
-    blockedState: blocked.state,
-    unblockedState: unblocked.state,
-  };
-  await setConfig(config);
-  await refreshSelectorDots();
-  log('Кнопка «Продолжить» настроена: готовность распознаётся по фактическому состоянию элемента', 'ok');
-}
-
 function pickOnce(role) {
   return new Promise((resolve, reject) => {
     const listener = (msg) => {
       if (msg.type === 'ELEMENT_PICKED' && msg.role === role) {
         chrome.runtime.onMessage.removeListener(listener);
-        resolve({ selector: msg.selector, meta: msg.meta, state: msg.state });
+        resolve({ selector: msg.selector, meta: msg.meta });
       } else if (msg.type === 'PICK_CANCELLED') {
         chrome.runtime.onMessage.removeListener(listener);
         reject(new Error('Выбор отменён'));
@@ -350,8 +318,6 @@ async function resetSelector(role) {
   const roleDef = SELECTOR_ROLES.find((r) => r.key === role);
   log(`Сброшен селектор «${roleDef ? roleDef.label : role}»`, 'warn');
 }
-
-// ---------- рабочая вкладка ----------
 
 async function ensureWorkingTab() {
   if (workingTabId) {
@@ -402,8 +368,6 @@ function waitForContentReady(timeout = 15000) {
     }, timeout);
   });
 }
-
-// ---------- запуск/цикл проверки ----------
 
 async function startRun() {
   if (!sheet) return log('Сначала откройте файл', 'error');
@@ -515,8 +479,6 @@ async function confirmTeachRole(role) {
   updateRunButtons();
   handleRowDone(teach.text, role === 'price' ? 'ok' : 'warn');
 }
-
-// ---------- журнал ----------
 
 function log(text, level) {
   const line = document.createElement('div');
