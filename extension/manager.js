@@ -56,6 +56,7 @@ let queueIndex = 0;
 let running = false;
 let currentRow = null;
 let pendingTeach = null;
+let completedRowIds = new Set();
 
 const els = {
   openFileBtn: document.getElementById('openFileBtn'),
@@ -145,6 +146,7 @@ async function openFile() {
 async function onSheetChange() {
   sheetName = els.sheetSelect.value;
   sheet = workbook.Sheets[sheetName];
+  completedRowIds = new Set();
   await populateColumnSelects();
   if (cellWriter) await cellWriter.useSheet(sheetName);
 }
@@ -244,10 +246,16 @@ function extractRows() {
   const rows = [];
   let skippedByFilter = 0;
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const id = `row-${r}`;
     const policyRef = XLSX.utils.encode_cell({ r, c: policyColIdx });
     const policyCell = sheet[policyRef];
     const value = policyCell && policyCell.v != null ? String(policyCell.v).trim() : '';
     if (!value) continue;
+
+    if (completedRowIds.has(id)) {
+      skippedByFilter++;
+      continue;
+    }
 
     const resultRef = XLSX.utils.encode_cell({ r, c: resultColIdx });
     const resultCell = sheet[resultRef];
@@ -257,13 +265,19 @@ function extractRows() {
       continue;
     }
 
-    rows.push({ id: `row-${r}`, rowIndex: r, policyNumber: value, resultRef });
+    rows.push({ id, rowIndex: r, policyNumber: value, resultRef });
   }
   rows.skippedByFilter = skippedByFilter;
   return rows;
 }
 
-async function persistResult(resultRef, text) {
+function buildRowRefs(rowIndex) {
+  const refs = [];
+  for (let c = 0; c <= resultColIdx; c++) refs.push(XLSX.utils.encode_cell({ r: rowIndex, c }));
+  return refs;
+}
+
+async function persistResult(row, text, role) {
   if (!fileHandle || !cellWriter) {
     fileHandle = null;
     cellWriter = null;
@@ -274,7 +288,10 @@ async function persistResult(resultRef, text) {
     cellWriter = null;
     throw new Error('Пропало разрешение на запись в файл результата — запустите проверку заново, будет предложено выбрать файл результата снова');
   }
-  cellWriter.setCell(resultRef, text);
+  cellWriter.setCell(row.resultRef, text);
+  if (role === 'price' || role === 'impossible') {
+    await cellWriter.colorCells(buildRowRefs(row.rowIndex), role === 'price' ? 'blue' : 'red');
+  }
   const bytes = await cellWriter.toBytes();
   const writable = await fileHandle.createWritable();
   await writable.write(bytes);
@@ -456,7 +473,7 @@ async function ensureWorkingTab() {
         clearRowTimeout();
         log('Рабочая вкладка закрыта — цикл остановлен', 'error');
         if (currentRow) {
-          persistResult(currentRow.resultRef, 'Ошибка: рабочая вкладка была закрыта до получения результата').catch(
+          persistResult(currentRow, 'Ошибка: рабочая вкладка была закрыта до получения результата').catch(
             (e) => log(`Не удалось сохранить файл: ${e.message || e}`, 'error')
           );
         }
@@ -596,7 +613,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg.rowId && msg.rowId !== currentRow.id) return;
 
   if (msg.type === 'RESULT') {
-    handleRowDone(msg.text, msg.role === 'price' ? 'ok' : 'warn');
+    handleRowDone(msg.text, msg.role === 'price' ? 'ok' : 'warn', msg.role);
   } else if (msg.type === 'ERROR') {
     handleRowDone(`Ошибка: ${msg.message}`, 'error');
   } else if (msg.type === 'NEED_TEACH') {
@@ -613,10 +630,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
 });
 
-async function handleRowDone(text, level) {
+async function handleRowDone(text, level, role) {
   clearRowTimeout();
   try {
-    await persistResult(currentRow.resultRef, text);
+    await persistResult(currentRow, text, role);
   } catch (e) {
     log(`ОСТАНОВЛЕНО: не удалось сохранить файл — ${e.message || e}`, 'error');
     running = false;
@@ -624,6 +641,7 @@ async function handleRowDone(text, level) {
     updateRunButtons();
     return;
   }
+  completedRowIds.add(currentRow.id);
   log(`Строка ${currentRow.rowIndex + 1}: ${text}`, level);
   queueIndex++;
   updateProgress();
@@ -653,7 +671,7 @@ async function confirmTeachRole(role) {
 
   running = true;
   updateRunButtons();
-  await handleRowDone(teach.text, role === 'price' ? 'ok' : 'warn');
+  await handleRowDone(teach.text, role === 'price' ? 'ok' : 'warn', role);
 }
 
 function log(text, level) {

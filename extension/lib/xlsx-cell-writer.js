@@ -1,6 +1,11 @@
 const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
+const STANDARD_FILL_COLORS = {
+  red: 'FFFF0000', // стандартный "Красный" в палитре Excel
+  blue: 'FF0070C0', // стандартный "Синий" в палитре Excel
+};
+
 function colLettersToNum(letters) {
   let n = 0;
   for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
@@ -51,6 +56,12 @@ function buildCellXml(ref, text, styleAttr) {
 function extractAttr(tag, name) {
   const m = new RegExp(`\\s${name}="([^"]*)"`).exec(tag);
   return m ? m[1] : null;
+}
+
+function setOrReplaceAttr(openTag, name, value) {
+  const attrRe = new RegExp(`\\s${name}="[^"]*"`);
+  if (attrRe.test(openTag)) return openTag.replace(attrRe, ` ${name}="${value}"`);
+  return openTag.replace(/^<[a-zA-Z]+/, (tagStart) => `${tagStart} ${name}="${value}"`);
 }
 
 // Находит один тег (и его тело, если он не самозакрывающийся) по regex
@@ -116,17 +127,15 @@ function insertRowXml(xml, rowNum, newRowXml) {
   return xml.slice(0, bodyStart) + newBody + xml.slice(closeIdx);
 }
 
-// Точечная правка одной ячейки прямо в тексте XML — без DOMParser/XMLSerializer
-// на этом пути вообще. Меняются только байты найденного тега <row>/<c>; всё
-// остальное содержимое строки остаётся буквально тем же самым объектом String
-// (копируется через slice), никакой пересборки/нормализации документа не происходит.
-function spliceCellIntoXml(xml, ref, text) {
+// Общая механика точечной правки: находит <row>/<c> (или устанавливает, что
+// их ещё нет) и просит callback построить новый XML для найденной/недостающей
+// ячейки. Сама НИКОГДА не разбирает документ через DOM — только slice().
+function editCellInXml(xml, ref, buildReplacement, buildNewRowXml) {
   const { row: rowNum, colNum } = splitRef(ref);
   const rowSpan = findRowSpan(xml, rowNum);
 
   if (!rowSpan) {
-    const newRowXml = `<row r="${rowNum}">${buildCellXml(ref, text, ' ')}</row>`;
-    return insertRowXml(xml, Number(rowNum), newRowXml);
+    return insertRowXml(xml, Number(rowNum), buildNewRowXml());
   }
 
   const rowBody = rowSpan.selfClosing ? '' : xml.slice(rowSpan.bodyStart, rowSpan.bodyEnd);
@@ -134,20 +143,99 @@ function spliceCellIntoXml(xml, ref, text) {
 
   let newRowBody;
   if (cellSpan) {
-    const styleVal = extractAttr(cellSpan.openTag, 's');
-    const styleAttr = styleVal !== null ? ` s="${styleVal}" ` : ' ';
-    const newCellXml = buildCellXml(ref, text, styleAttr);
+    const existingCellXml = rowBody.slice(cellSpan.start, cellSpan.end);
+    const newCellXml = buildReplacement(existingCellXml, cellSpan.openTag);
     newRowBody = rowBody.slice(0, cellSpan.start) + newCellXml + rowBody.slice(cellSpan.end);
   } else {
-    newRowBody = insertCellXmlIntoRowBody(rowBody, colNum, buildCellXml(ref, text, ' '));
+    newRowBody = insertCellXmlIntoRowBody(rowBody, colNum, buildReplacement(null, null));
   }
 
   if (rowSpan.selfClosing) {
     const openTagAsOpen = rowSpan.openTag.replace(/\/>$/, '>');
-    const newRowFull = openTagAsOpen + newRowBody + '</row>';
-    return xml.slice(0, rowSpan.start) + newRowFull + xml.slice(rowSpan.end);
+    return xml.slice(0, rowSpan.start) + openTagAsOpen + newRowBody + '</row>' + xml.slice(rowSpan.end);
   }
   return xml.slice(0, rowSpan.bodyStart) + newRowBody + xml.slice(rowSpan.bodyEnd);
+}
+
+// Точечная правка значения одной ячейки прямо в тексте XML — без
+// DOMParser/XMLSerializer на этом пути вообще. Меняются только байты
+// найденного тега <row>/<c>; всё остальное содержимое строки остаётся
+// буквально тем же самым объектом String (копируется через slice), никакой
+// пересборки/нормализации документа не происходит.
+function spliceCellIntoXml(xml, ref, text) {
+  return editCellInXml(
+    xml,
+    ref,
+    (existingCellXml, existingOpenTag) => {
+      const styleVal = existingOpenTag ? extractAttr(existingOpenTag, 's') : null;
+      const styleAttr = styleVal !== null ? ` s="${styleVal}" ` : ' ';
+      return buildCellXml(ref, text, styleAttr);
+    },
+    () => `<row r="${splitRef(ref).row}">${buildCellXml(ref, text, ' ')}</row>`
+  );
+}
+
+// Точечно меняет ТОЛЬКО стиль (s="...") ячейки, не трогая её значение —
+// для существующей ячейки правится лишь открывающий тег.
+function spliceCellStyleIntoXml(xml, ref, styleIdx) {
+  return editCellInXml(
+    xml,
+    ref,
+    (existingCellXml, existingOpenTag) => {
+      if (!existingOpenTag) return `<c r="${ref}" s="${styleIdx}"/>`;
+      const newOpenTag = setOrReplaceAttr(existingOpenTag, 's', String(styleIdx));
+      return newOpenTag + existingCellXml.slice(existingOpenTag.length);
+    },
+    () => `<row r="${splitRef(ref).row}"><c r="${ref}" s="${styleIdx}"/></row>`
+  );
+}
+
+// Точечное добавление стилей заливки в styles.xml — та же дисциплина:
+// находим <fills>/<cellXfs>, дописываем один новый элемент перед закрывающим
+// тегом и обновляем count. Всё остальное содержимое не трогается.
+class StylesEditor {
+  constructor(xml) {
+    this.xml = xml;
+    this.cache = {};
+  }
+
+  getOrCreateFillStyle(colorName) {
+    if (this.cache[colorName] != null) return this.cache[colorName];
+    const rgb = STANDARD_FILL_COLORS[colorName];
+    if (!rgb) throw new Error(`Неизвестный цвет заливки: ${colorName}`);
+
+    const fillIdx = this._appendToCountedList(
+      'fills',
+      `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`
+    );
+    const xfIdx = this._appendToCountedList(
+      'cellXfs',
+      `<xf numFmtId="0" fontId="0" fillId="${fillIdx}" borderId="0" xfId="0" applyFill="1"/>`
+    );
+    this.cache[colorName] = xfIdx;
+    return xfIdx;
+  }
+
+  _appendToCountedList(tagName, itemXml) {
+    const re = new RegExp(`<${tagName}\\s+count="(\\d+)"\\s*>`);
+    const m = re.exec(this.xml);
+    if (!m) throw new Error(`Не найден <${tagName}> в styles.xml`);
+    const count = Number(m[1]);
+    const openStart = m.index;
+    const openEnd = m.index + m[0].length;
+    const closeLiteral = `</${tagName}>`;
+    const closeIdx = this.xml.indexOf(closeLiteral, openEnd);
+    if (closeIdx === -1) throw new Error(`Не найден закрывающий тег ${closeLiteral}`);
+
+    const newOpenTag = `<${tagName} count="${count + 1}">`;
+    this.xml =
+      this.xml.slice(0, openStart) +
+      newOpenTag +
+      this.xml.slice(openEnd, closeIdx) +
+      itemXml +
+      this.xml.slice(closeIdx);
+    return count;
+  }
 }
 
 class XlsxCellWriter {
@@ -155,6 +243,7 @@ class XlsxCellWriter {
     this.zip = zip;
     this.sheetPath = null;
     this.xml = null;
+    this.stylesEditor = null;
   }
 
   static async open(fileBytes) {
@@ -171,12 +260,37 @@ class XlsxCellWriter {
     this.xml = spliceCellIntoXml(this.xml, ref, text);
   }
 
+  async colorCells(refs, colorName) {
+    await this._ensureStylesEditor();
+    const styleIdx = this.stylesEditor.getOrCreateFillStyle(colorName);
+    for (const ref of refs) {
+      this.xml = spliceCellStyleIntoXml(this.xml, ref, styleIdx);
+    }
+  }
+
+  async _ensureStylesEditor() {
+    if (this.stylesEditor) return;
+    const xml = await this.zip.file('xl/styles.xml').async('string');
+    this.stylesEditor = new StylesEditor(xml);
+  }
+
   async toBytes() {
     this.zip.file(this.sheetPath, this.xml);
+    if (this.stylesEditor) {
+      this.zip.file('xl/styles.xml', this.stylesEditor.xml);
+    }
     return this.zip.generateAsync({ type: 'arraybuffer' });
   }
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { XlsxCellWriter, resolveSheetPath, splitRef, colLettersToNum, spliceCellIntoXml };
+  module.exports = {
+    XlsxCellWriter,
+    resolveSheetPath,
+    splitRef,
+    colLettersToNum,
+    spliceCellIntoXml,
+    spliceCellStyleIntoXml,
+    StylesEditor,
+  };
 }
