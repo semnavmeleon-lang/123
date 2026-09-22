@@ -19,9 +19,13 @@
   button { cursor: pointer; background: var(--accent); color: #fff; border-color: var(--accent); }
   button.secondary { background: #fff; color: var(--text); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; }
+  .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; flex-shrink: 0; }
   .status-dot.ok { background: var(--ok); }
   .muted { color: var(--muted); font-size: 13px; }
+  .selector-row { padding: 6px 0; border-bottom: 1px solid #eef1f4; }
+  .selector-row:last-child { border-bottom: none; }
+  .selector-row .sel-label { min-width: 260px; }
+  .selector-row .sel-meta { flex: 1; }
   .progress { font-size: 14px; }
   #log { max-height: 320px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12.5px; background: #0d1117; color: #c9d1d9; border-radius: 8px; padding: 12px; }
   #log .ok { color: #56d364; }
@@ -63,21 +67,15 @@
 
   <div class="card">
     <h2>3. Элементы страницы</h2>
-    <div class="row">
-      <span><span id="dotCheckbox" class="status-dot"></span>Чекбокс «Предыдущий полис ВСК»</span>
-      <span><span id="dotInput" class="status-dot"></span>Поле ввода полиса</span>
-      <span><span id="dotContinue" class="status-dot"></span>Кнопка «Продолжить»</span>
+    <div class="muted" style="margin-bottom: 10px;">
+      Каждый элемент назначается и сбрасывается независимо от остальных.
+      «Продолжить» назначается двумя кликами — по заблокированной, затем по
+      разблокированной кнопке — чтобы отличать готовность не по атрибуту
+      disabled, а по тому, что реально видно на странице. Варианты результата
+      (цена / невозможно рассчитать) можно назначить вручную, когда виден
+      нужный экран, либо один раз показать во время обычного прогона.
     </div>
-    <div class="row">
-      <button id="setupBtn" class="secondary">Настроить элементы на странице…</button>
-      <button id="resetFormSelectorsBtn" class="secondary">Сбросить</button>
-    </div>
-    <div class="muted">Варианты результата (цена / невозможно рассчитать) распознаются автоматически — расширение попросит один раз показать каждый, когда он реально появится на странице.</div>
-    <div class="row" style="margin-top:8px;">
-      <span><span id="dotPrice" class="status-dot"></span>Вариант «Цена»</span>
-      <span><span id="dotImpossible" class="status-dot"></span>Вариант «Невозможно рассчитать»</span>
-      <button id="resetResultSelectorsBtn" class="secondary">Сбросить оба</button>
-    </div>
+    <div id="selectorRows"></div>
   </div>
 
   <div class="card" id="teachPrompt">

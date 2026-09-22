@@ -20,6 +20,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         role: msg.role,
         selector: buildSelector(el),
         meta: describeElement(el),
+        state: getElementState(el),
       });
     });
     sendResponse({ ok: true });
@@ -45,21 +46,31 @@ async function main() {
 }
 
 // ---------- фаза заполнения формы ----------
+// Чекбокс -> номер полиса -> "Найти" -> ждём разблокировки "Продолжить" -> "Продолжить".
 
 async function runFormPhase(run, config) {
   const sel = config.selectors || {};
-  if (!sel.checkbox || !sel.input || !sel.continueBtn) {
-    reportError(run, new Error('Не настроены элементы формы (чекбокс/поле/кнопка) — сделайте это в панели'));
+  if (!sel.checkbox || !sel.input || !sel.findBtn || !sel.continueBtn) {
+    reportError(run, new Error('Не назначены все элементы формы (чекбокс / поле полиса / «Найти» / «Продолжить») — сделайте это в панели'));
     return;
   }
 
   const checkbox = await waitForElement(sel.checkbox.selector, FORM_WAIT_MS);
   const input = await waitForElement(sel.input.selector, FORM_WAIT_MS);
-  const continueBtn = await waitForElement(sel.continueBtn.selector, FORM_WAIT_MS);
+  const findBtn = await waitForElement(sel.findBtn.selector, FORM_WAIT_MS);
 
   if (!checkbox.checked) checkbox.click();
   setNativeValue(input, run.policyNumber);
-  await waitForEnabled(continueBtn, FORM_WAIT_MS);
+  findBtn.click();
+
+  // "Продолжить" может не существовать/быть неактуальным до клика по "Найти" —
+  // ищем его заново уже после клика, а не заранее.
+  const continueBtn = await waitForElement(sel.continueBtn.selector, FORM_WAIT_MS);
+
+  // Готовность определяется не по HTML-атрибуту disabled (сайт может блокировать
+  // кнопку классом/aria-disabled), а по совпадению с состоянием, которое сам
+  // пользователь один раз показал как "разблокировано, данные подтянулись".
+  await waitForButtonState(continueBtn, sel.continueBtn.unblockedState, FORM_WAIT_MS);
 
   // Переключаем фазу ДО клика: если клик вызовет полную навигацию, новый
   // экземпляр content.js на следующей странице продолжит именно с этого места.
@@ -113,6 +124,7 @@ function requestTeach(run) {
       selector: buildSelector(el),
       text: textOf(el),
       meta: describeElement(el),
+      state: getElementState(el),
     });
   });
 }
@@ -206,22 +218,28 @@ function waitForAny(selectors, timeout) {
   });
 }
 
-function waitForEnabled(el, timeout) {
-  return new Promise((resolve) => {
-    if (!el.disabled) return resolve(el);
+// Сравнение с состоянием кнопки "Продолжить", которое пользователь один раз
+// показал как "разблокировано" (см. getElementState). Не полагается на то,
+// что сайт использует именно HTML-атрибут disabled.
+function waitForButtonState(el, targetState, timeout) {
+  return new Promise((resolve, reject) => {
+    if (!targetState || statesEqual(getElementState(el), targetState)) return resolve(el);
+
     const observer = new MutationObserver(() => {
-      if (!el.disabled) {
+      if (statesEqual(getElementState(el), targetState)) {
         cleanup();
         resolve(el);
       }
     });
     observer.observe(el, { attributes: true, attributeFilter: ['disabled', 'class', 'aria-disabled'] });
+
     const timer = timeout
       ? setTimeout(() => {
           cleanup();
-          resolve(el); // не блокируем сценарий навсегда — пробуем кликнуть как есть
+          reject(new Error('Кнопка «Продолжить» не перешла в разблокированное состояние (данные полиса не подтянулись)'));
         }, timeout)
       : null;
+
     function cleanup() {
       observer.disconnect();
       if (timer) clearTimeout(timer);
@@ -327,4 +345,19 @@ function describeElement(el) {
   const type = el.getAttribute('type') ? `[type="${el.getAttribute('type')}"]` : '';
   const text = textOf(el).slice(0, 40);
   return `${tag}${id}${name}${type}${text ? ' "' + text + '"' : ''}`;
+}
+
+// Снимок состояния элемента (для кнопки "Продолжить": заблокировано/разблокировано).
+// Три общих, ничего не предполагающих о конкретной вёрстке сигнала — какой из них
+// реально меняется на сайте, не важно: сравнение идёт по всем сразу.
+function getElementState(el) {
+  return {
+    disabled: !!el.disabled,
+    className: el.className || '',
+    ariaDisabled: el.getAttribute('aria-disabled'),
+  };
+}
+
+function statesEqual(a, b) {
+  return !!a && !!b && a.disabled === b.disabled && a.className === b.className && a.ariaDisabled === b.ariaDisabled;
 }
