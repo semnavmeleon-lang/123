@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "VSK OSAGO — пакетная проверка пролонгации",
+  "version": "1.0.0",
+  "description": "Проверяет возможность пролонгации ОСАГО по списку полисов из Excel на lka.vsk.ru и записывает результат обратно в файл.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://lka.vsk.ru/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Открыть панель проверки пролонгации"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://lka.vsk.ru/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
