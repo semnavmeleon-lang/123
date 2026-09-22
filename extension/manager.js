@@ -70,6 +70,7 @@ const els = {
   teachCaptured: document.getElementById('teachCaptured'),
   startBtn: document.getElementById('startBtn'),
   stopBtn: document.getElementById('stopBtn'),
+  skipBtn: document.getElementById('skipBtn'),
   progress: document.getElementById('progress'),
   log: document.getElementById('log'),
 };
@@ -80,6 +81,13 @@ async function init() {
   renderSelectorRows();
   await refreshSelectorDots();
   wireUi();
+  preventTabDiscard();
+}
+
+function preventTabDiscard() {
+  chrome.tabs.getCurrent().then((tab) => {
+    if (tab) chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+  });
 }
 
 function wireUi() {
@@ -90,6 +98,7 @@ function wireUi() {
   els.openPageBtn.addEventListener('click', () => openWorkingPage().catch((e) => log(String(e.message || e), 'error')));
   els.startBtn.addEventListener('click', () => startRun().catch((e) => log(String(e.message || e), 'error')));
   els.stopBtn.addEventListener('click', stopRun);
+  els.skipBtn.addEventListener('click', skipRow);
   els.teachPriceBtn.addEventListener('click', () => confirmTeachRole('price').catch((e) => log(String(e.message || e), 'error')));
   els.teachImpossibleBtn.addEventListener('click', () => confirmTeachRole('impossible').catch((e) => log(String(e.message || e), 'error')));
 }
@@ -220,7 +229,9 @@ function extractRows() {
 }
 
 async function persistResult(resultRef, text) {
-  if (!fileHandle || !cellWriter) return;
+  if (!fileHandle || !cellWriter) {
+    throw new Error('Файл недоступен (страница панели могла перезагрузиться) — откройте файл заново и запустите проверку с начала');
+  }
   cellWriter.setCell(resultRef, text);
   const bytes = await cellWriter.toBytes();
   const writable = await fileHandle.createWritable();
@@ -471,6 +482,11 @@ function stopRun() {
   log('Остановлено пользователем', 'warn');
 }
 
+function skipRow() {
+  if (!running || !currentRow) return;
+  handleRowDone('Пропущено вручную', 'warn');
+}
+
 let rowTimeoutId = null;
 
 function armRowTimeout(row) {
@@ -494,6 +510,7 @@ function clearRowTimeout() {
 function updateRunButtons() {
   els.startBtn.disabled = running;
   els.stopBtn.disabled = !running;
+  els.skipBtn.disabled = !running;
 }
 
 function updateProgress() {
@@ -552,7 +569,11 @@ async function handleRowDone(text, level) {
   try {
     await persistResult(currentRow.resultRef, text);
   } catch (e) {
-    log(`Не удалось сохранить файл: ${e.message || e}`, 'error');
+    log(`ОСТАНОВЛЕНО: не удалось сохранить файл — ${e.message || e}`, 'error');
+    running = false;
+    chrome.storage.local.set({ run: { active: false, phase: 'idle' } });
+    updateRunButtons();
+    return;
   }
   log(`Строка ${currentRow.rowIndex + 1}: ${text}`, level);
   queueIndex++;
