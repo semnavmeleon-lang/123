@@ -178,8 +178,18 @@ function readHeaders(sheet) {
   return headers;
 }
 
+function isWhiteOrDefaultFill(color) {
+  if (!color) return true;
+  if (color.rgb) return color.rgb.toUpperCase().slice(-6) === 'FFFFFF';
+  if (color.theme === 0) return true; // "Фон 1" — цвет темы по умолчанию, обычно белый
+  if (color.indexed === 1 || color.indexed === 64 || color.indexed === 65) return true;
+  return false;
+}
+
 function isCellColored(cell) {
-  return !!(cell && cell.s && cell.s.patternType && cell.s.patternType !== 'none');
+  if (!cell || !cell.s || !cell.s.patternType || cell.s.patternType === 'none') return false;
+  if (cell.s.patternType !== 'solid') return true;
+  return !isWhiteOrDefaultFill(cell.s.fgColor);
 }
 
 function isCellCommented(cell) {
@@ -189,6 +199,7 @@ function isCellCommented(cell) {
 function extractRows() {
   const range = XLSX.utils.decode_range(sheet['!ref']);
   const rows = [];
+  let skippedByFilter = 0;
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
     const policyRef = XLSX.utils.encode_cell({ r, c: policyColIdx });
     const policyCell = sheet[policyRef];
@@ -197,10 +208,14 @@ function extractRows() {
 
     const resultRef = XLSX.utils.encode_cell({ r, c: resultColIdx });
     const resultCell = sheet[resultRef];
-    if (isCellColored(resultCell) || isCellCommented(resultCell)) continue;
+    if (isCellColored(resultCell) || isCellCommented(resultCell)) {
+      skippedByFilter++;
+      continue;
+    }
 
     rows.push({ id: `row-${r}`, rowIndex: r, policyNumber: value, resultRef });
   }
+  rows.skippedByFilter = skippedByFilter;
   return rows;
 }
 
@@ -430,7 +445,15 @@ async function startRun() {
   if (policyColIdx == null || resultColIdx == null) return log('Выберите колонки', 'error');
 
   queue = extractRows();
-  if (queue.length === 0) return log('В выбранной колонке нет номеров полисов', 'error');
+  if (queue.length === 0) {
+    if (queue.skippedByFilter > 0) {
+      return log(
+        `В выбранной колонке нет строк для проверки: ${queue.skippedByFilter} найдено, но у всех ячейка результата уже закрашена или содержит комментарий — они считаются обработанными. Если это не так, проверьте выбранную колонку результата или сбросьте заливку/комментарии.`,
+        'error'
+      );
+    }
+    return log('В выбранной колонке нет номеров полисов', 'error');
+  }
 
   queueIndex = 0;
   running = true;
