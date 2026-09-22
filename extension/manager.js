@@ -4,44 +4,37 @@ const SELECTOR_ROLES = [
   {
     key: 'checkbox',
     label: 'Чекбокс «Предыдущий полис ВСК»',
-    navigate: true,
     instruction: 'Кликните по галочке «Предыдущий полис ВСК» в рабочей вкладке',
     skippable: true,
   },
   {
     key: 'input',
     label: 'Поле ввода номера полиса',
-    navigate: true,
     instruction: 'Кликните по полю ввода номера полиса',
   },
   {
     key: 'findBtn',
     label: 'Кнопка «Найти»',
-    navigate: true,
     instruction: 'Кликните по кнопке «Найти» (нажимается сразу после ввода номера полиса)',
   },
   {
     key: 'continueBtnInactive',
     label: 'Кнопка «Продолжить» (неактивная)',
-    navigate: true,
     instruction: 'Кликните по кнопке «Продолжить», пока она ещё неактивна (сразу после «Найти»)',
   },
   {
     key: 'continueBtnActive',
     label: 'Кнопка «Продолжить» (активная)',
-    navigate: true,
     instruction: 'Кликните по кнопке «Продолжить», когда она уже активна (данные подтянулись)',
   },
   {
     key: 'priceResult',
     label: 'Результат «Цена»',
-    navigate: false,
     instruction: 'Откройте в рабочей вкладке экран с результатом «Цена» и кликните по нему',
   },
   {
     key: 'impossibleResult',
     label: 'Результат «Невозможно рассчитать»',
-    navigate: false,
     instruction: 'Откройте в рабочей вкладке экран с результатом «Невозможно рассчитать» и кликните по нему',
   },
 ];
@@ -70,6 +63,7 @@ const els = {
   policyColSelect: document.getElementById('policyColSelect'),
   resultColSelect: document.getElementById('resultColSelect'),
   selectorRows: document.getElementById('selectorRows'),
+  openPageBtn: document.getElementById('openPageBtn'),
   teachPrompt: document.getElementById('teachPrompt'),
   teachPriceBtn: document.getElementById('teachPriceBtn'),
   teachImpossibleBtn: document.getElementById('teachImpossibleBtn'),
@@ -93,6 +87,7 @@ function wireUi() {
   els.sheetSelect.addEventListener('change', onSheetChange);
   els.policyColSelect.addEventListener('change', () => { policyColIdx = Number(els.policyColSelect.value); saveColumnPrefs(); });
   els.resultColSelect.addEventListener('change', () => { resultColIdx = Number(els.resultColSelect.value); saveColumnPrefs(); });
+  els.openPageBtn.addEventListener('click', () => openWorkingPage().catch((e) => log(String(e.message || e), 'error')));
   els.startBtn.addEventListener('click', () => startRun().catch((e) => log(String(e.message || e), 'error')));
   els.stopBtn.addEventListener('click', stopRun);
   els.teachPriceBtn.addEventListener('click', () => confirmTeachRole('price').catch((e) => log(String(e.message || e), 'error')));
@@ -304,15 +299,18 @@ function setRowBusy(role, busy) {
   document.querySelectorAll(`[data-role="${role}"]`).forEach((btn) => { btn.disabled = busy; });
 }
 
+async function openWorkingPage() {
+  await ensureWorkingTab();
+  await navigateWorkingTab(START_URL);
+  await waitForContentReady();
+  log('Рабочая вкладка открыта на странице ВСК', 'ok');
+}
+
 async function assignSelector(role) {
   const roleDef = SELECTOR_ROLES.find((r) => r.key === role);
   setRowBusy(role, true);
   try {
     await ensureWorkingTab();
-    if (roleDef.navigate) {
-      await navigateWorkingTab(START_URL);
-      await waitForContentReady();
-    }
     log(roleDef.instruction, 'info');
     const picked = await pickOnce(role);
     await saveSelector(role, picked);
