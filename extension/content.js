@@ -11,6 +11,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         role: msg.role,
         selector: buildSelector(el),
         meta: describeElement(el),
+        state: getElementState(el),
       });
     });
     sendResponse({ ok: true });
@@ -59,6 +60,7 @@ async function runFormPhase(run, config) {
   findBtn.click();
 
   const continueBtn = await waitForElement(sel.continueBtnActive.selector, FORM_WAIT_MS);
+  await waitForState(continueBtn, sel.continueBtnActive.state, FORM_WAIT_MS);
 
   const nextRun = { ...run, phase: 'awaiting-result' };
   await chrome.storage.local.set({ run: nextRun });
@@ -184,6 +186,44 @@ function waitForAny(selectors, timeout) {
       ? setTimeout(() => {
           cleanup();
           reject(new Error('Ни один из ожидаемых результатов не появился'));
+        }, timeout)
+      : null;
+
+    function cleanup() {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    }
+  });
+}
+
+function getElementState(el) {
+  return {
+    disabled: !!el.disabled,
+    className: el.className || '',
+    ariaDisabled: el.getAttribute('aria-disabled'),
+  };
+}
+
+function statesEqual(a, b) {
+  return !!a && !!b && a.disabled === b.disabled && a.className === b.className && a.ariaDisabled === b.ariaDisabled;
+}
+
+function waitForState(el, targetState, timeout) {
+  return new Promise((resolve, reject) => {
+    if (!targetState || statesEqual(getElementState(el), targetState)) return resolve(el);
+
+    const observer = new MutationObserver(() => {
+      if (statesEqual(getElementState(el), targetState)) {
+        cleanup();
+        resolve(el);
+      }
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['disabled', 'class', 'aria-disabled'] });
+
+    const timer = timeout
+      ? setTimeout(() => {
+          cleanup();
+          reject(new Error('Кнопка «Продолжить» не перешла в состояние, отмеченное как активное'));
         }, timeout)
       : null;
 

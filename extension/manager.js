@@ -326,7 +326,7 @@ function pickOnce(role) {
     const listener = (msg) => {
       if (msg.type === 'ELEMENT_PICKED' && msg.role === role) {
         chrome.runtime.onMessage.removeListener(listener);
-        resolve({ selector: msg.selector, meta: msg.meta });
+        resolve({ selector: msg.selector, meta: msg.meta, state: msg.state });
       } else if (msg.type === 'PICK_CANCELLED') {
         chrome.runtime.onMessage.removeListener(listener);
         reject(new Error('Выбор отменён'));
@@ -342,20 +342,20 @@ function pickOnce(role) {
 
 async function saveSelector(role, picked) {
   const config = await getConfig();
-  config.selectors[role] = { selector: picked.selector, meta: picked.meta };
+  config.selectors[role] = { selector: picked.selector, meta: picked.meta, state: picked.state };
   await setConfig(config);
   await refreshSelectorDots();
   log(`Назначено (${role}): ${picked.meta}`, 'ok');
-  warnIfContinueSelectorsMatch(config);
+  noteContinueSelectorsMatch(config);
 }
 
-function warnIfContinueSelectorsMatch(config) {
+function noteContinueSelectorsMatch(config) {
   const inactive = config.selectors.continueBtnInactive;
   const active = config.selectors.continueBtnActive;
   if (inactive && active && inactive.selector === active.selector) {
     log(
-      'Внимание: неактивная и активная «Продолжить» дали одинаковый селектор — по нему нельзя будет отличить состояния, кнопка будет нажата сразу, как только появится. Переназначьте, кликнув точнее (например, по элементу, у которого меняется класс/текст между состояниями).',
-      'warn'
+      'Неактивная и активная «Продолжить» — один и тот же элемент по расположению, отличается только состоянием (класс/disabled/aria-disabled). Это учтено: проверка ждёт именно смены состояния на активное, а не просто появления элемента.',
+      'info'
     );
   }
 }
