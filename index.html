@@ -1375,6 +1375,7 @@
 
     await addPersonalDataConsentPage(outDoc, font, fontBold, data);
     await addMarketingConsentPage(outDoc, font, fontBold, data);
+    await addOtkazPage(outDoc, font, fontBold, data);
 
     const zayavPages = await outDoc.copyPages(zayavDoc, zayavDoc.getPageIndices());
     zayavPages.forEach((p) => outDoc.addPage(p));
