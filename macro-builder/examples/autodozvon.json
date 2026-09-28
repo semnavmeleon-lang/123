@@ -1,0 +1,42 @@
+[
+  {
+    "id": "m_example_autodozvon",
+    "name": "Автообзвон по списку (Yealink)",
+    "updatedAt": 0,
+    "openInNewTab": false,
+    "inputs": [
+      {
+        "key": "phones",
+        "label": "Номера (по одному на строку или через запятую)",
+        "multiline": true,
+        "default": ""
+      }
+    ],
+    "steps": [
+      {
+        "id": "s1",
+        "type": "loopList",
+        "sourceKey": "phones",
+        "itemVar": "phone",
+        "steps": [
+          {
+            "id": "s2",
+            "type": "customJs",
+            "code": "return String(vars.phone).replace(/\\D/g, '');",
+            "saveTo": "digits"
+          },
+          {
+            "id": "s3",
+            "type": "navigate",
+            "url": "http://172.26.47.19/servlet?m=action&p=dial&num=<${digits}>"
+          },
+          {
+            "id": "s4",
+            "type": "wait",
+            "ms": 3000
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Конструктор макросов</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="page">
+  <h1>Конструктор макросов</h1>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="card">
+        <div class="pool-head"><h2>Макросы</h2></div>
+        <div class="pool-list" id="sidebarList"></div>
+        <button type="button" id="newMacroBtn" class="secondary-btn">+ Новый макрос</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="empty-state" id="builderEmpty">Выберите или создайте макрос слева</div>
+
+      <div class="card" id="builderCard" style="display:none">
+        <div class="grid">
+          <label class="wide">Название макроса
+            <input id="macroName" type="text">
+          </label>
+          <label class="checkbox-inline wide">
+            <input type="checkbox" id="openInNewTab"> Запускать в новой вкладке (вместо текущей целевой)
+          </label>
+        </div>
+
+        <div class="section-label">Входные параметры (запрашиваются перед запуском, доступны как ${ключ})</div>
+        <div id="inputsTable" class="inputs-table"></div>
+        <button type="button" id="addInputBtn" class="secondary-btn">+ Параметр</button>
+
+        <div class="section-label">Целевая вкладка (для «Выбрать элемент», записи и запуска без новой вкладки)</div>
+        <div class="row-with-btn wide">
+          <select id="targetTabSelect"></select>
+          <button type="button" id="refreshTabsBtn" title="Обновить список вкладок">&#8635;</button>
+        </div>
+
+        <div class="section-label">Шаги</div>
+        <div id="stepsRoot"></div>
+        <div class="add-step-row">
+          <select id="addStepSelect"></select>
+          <button type="button" id="addStepBtn" class="secondary-btn" style="width:auto;margin:0;">+ Добавить шаг</button>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="runBtn">&#9654; Запустить</button>
+          <button type="button" id="stopBtn" class="danger-btn">Остановить</button>
+          <button type="button" id="recordBtn" class="secondary-btn" style="width:auto;margin:0;">&#9679; Записать шаги</button>
+          <button type="button" id="duplicateBtn" class="secondary-btn" style="width:auto;margin:0;">Дублировать</button>
+          <button type="button" id="exportBtn" class="secondary-btn" style="width:auto;margin:0;">Экспорт JSON</button>
+          <label class="secondary-btn" style="width:auto;margin:0;display:inline-block;cursor:pointer;">
+            Импорт JSON
+            <input id="importInput" type="file" accept="application/json" style="display:none">
+          </label>
+          <button type="button" id="deleteBtn" class="danger-btn">Удалить макрос</button>
+        </div>
+
+        <div class="section-label">Журнал выполнения</div>
+        <div id="logPanel" class="run-log"></div>
+      </div>
+    </main>
+  </div>
+</div>
+<script type="module" src="builder.js"></script>
+</body>
+</html>

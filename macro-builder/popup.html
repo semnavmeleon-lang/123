@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Макросы</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { padding: 14px; }
+  .popup { max-height: 520px; overflow-y: auto; }
+</style>
+</head>
+<body>
+  <div class="popup">
+    <div class="popup-head">
+      <h2 style="margin:0;">Макросы</h2>
+      <button type="button" id="openBuilderBtn" class="secondary-btn" style="width:auto;margin:0;padding:6px 10px;">Конструктор</button>
+    </div>
+    <div id="list" class="pool-list"></div>
+    <div id="emptyHint" class="empty-state" style="display:none;padding:20px 0;">Пока нет ни одного макроса</div>
+    <button type="button" id="newBtn" class="secondary-btn">+ Новый макрос</button>
+
+    <div id="inputForm" style="display:none;margin-top:10px;"></div>
+
+    <div id="runPanel" style="display:none;margin-top:10px;">
+      <div class="section-label">Выполнение</div>
+      <div id="runLog" class="run-log"></div>
+      <button type="button" id="stopBtn" class="danger-btn" style="width:100%;margin-top:8px;">Остановить</button>
+    </div>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
