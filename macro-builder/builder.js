@@ -1,10 +1,23 @@
-import { loadMacros, saveMacros, newMacro, uid, defaultStep, STEP_LABELS, STEP_GROUPS } from "./common.js";
+import {
+  loadMacros,
+  saveMacros,
+  newMacro,
+  uid,
+  defaultStep,
+  STEP_LABELS,
+  STEP_GROUPS,
+  newTrigger,
+  TRIGGER_LABELS,
+} from "./common.js";
 
 const sidebarList = document.getElementById("sidebarList");
 const nameInput = document.getElementById("macroName");
 const newTabCheckbox = document.getElementById("openInNewTab");
 const inputsTable = document.getElementById("inputsTable");
 const addInputBtn = document.getElementById("addInputBtn");
+const triggersTable = document.getElementById("triggersTable");
+const addTriggerSelect = document.getElementById("addTriggerSelect");
+const addTriggerBtn = document.getElementById("addTriggerBtn");
 const stepsRoot = document.getElementById("stepsRoot");
 const addStepSelect = document.getElementById("addStepSelect");
 const addStepBtn = document.getElementById("addStepBtn");
@@ -111,8 +124,10 @@ function renderMacro() {
   nameInput.value = current.name || "";
   newTabCheckbox.checked = !!current.openInNewTab;
   current.inputs = current.inputs || [];
+  current.triggers = current.triggers || [];
   current.steps = current.steps || [];
   renderInputsTable();
+  renderTriggersTable();
   rerenderAll();
 }
 
@@ -163,6 +178,96 @@ addInputBtn.addEventListener("click", () => {
   scheduleSave();
 });
 
+// ---------------- триггеры (расписание / автозапуск по URL) ----------------
+
+for (const [type, label] of Object.entries(TRIGGER_LABELS)) {
+  const opt = document.createElement("option");
+  opt.value = type;
+  opt.textContent = label;
+  addTriggerSelect.appendChild(opt);
+}
+
+function renderTriggersTable() {
+  triggersTable.innerHTML = "";
+  current.triggers.forEach((t, i) => {
+    const row = document.createElement("div");
+    row.className = "trigger-row";
+
+    const head = document.createElement("div");
+    head.className = "trigger-row-head";
+    const label = document.createElement("span");
+    label.className = "step-badge";
+    label.textContent = TRIGGER_LABELS[t.type] || t.type;
+    head.appendChild(label);
+
+    const enabledLabel = document.createElement("label");
+    enabledLabel.className = "checkbox-inline";
+    const enabledInput = document.createElement("input");
+    enabledInput.type = "checkbox";
+    enabledInput.checked = !!t.enabled;
+    enabledInput.addEventListener("change", () => {
+      t.enabled = enabledInput.checked;
+      scheduleSave();
+    });
+    enabledLabel.appendChild(enabledInput);
+    enabledLabel.appendChild(document.createTextNode(" включён"));
+    head.appendChild(enabledLabel);
+
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+    head.appendChild(spacer);
+    head.appendChild(
+      mkIconBtn("×", "Удалить триггер", () => {
+        current.triggers.splice(i, 1);
+        renderTriggersTable();
+        scheduleSave();
+      })
+    );
+    row.appendChild(head);
+
+    const fields = document.createElement("div");
+    fields.className = "step-fields";
+    if (t.type === "interval") {
+      textField(fields, "Каждые N минут", t.everyMinutes, (v) => {
+        t.everyMinutes = v;
+        scheduleSave();
+        chrome.runtime.sendMessage({ action: "syncAlarms" });
+      });
+    } else if (t.type === "daily") {
+      const timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.value = t.atTime || "09:00";
+      timeInput.addEventListener("input", () => {
+        t.atTime = timeInput.value;
+        scheduleSave();
+        chrome.runtime.sendMessage({ action: "syncAlarms" });
+      });
+      field(fields, "Время (каждый день)", timeInput);
+    } else if (t.type === "urlMatch") {
+      textField(
+        fields,
+        "Шаблон URL (можно * как маску)",
+        t.pattern,
+        (v) => {
+          t.pattern = v;
+          scheduleSave();
+        },
+        "https://example.com/orders*",
+        true
+      );
+    }
+    row.appendChild(fields);
+    triggersTable.appendChild(row);
+  });
+}
+
+addTriggerBtn.addEventListener("click", () => {
+  current.triggers.push(newTrigger(addTriggerSelect.value));
+  renderTriggersTable();
+  scheduleSave();
+  chrome.runtime.sendMessage({ action: "syncAlarms" });
+});
+
 // ---------------- дерево шагов ----------------
 
 function renderStepsList(arr, container, depth) {
@@ -202,6 +307,9 @@ function renderStepCard(step, arr, idx) {
   head.appendChild(spacer);
 
   head.appendChild(
+    mkIconBtn("▶", "Выполнить только этот шаг", () => runSingleStep(step))
+  );
+  head.appendChild(
     mkIconBtn("↑", "Выше", () => {
       if (idx > 0) {
         [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
@@ -239,6 +347,24 @@ function renderStepCard(step, arr, idx) {
   fields.className = "step-fields";
   renderStepFields(step, fields);
   card.appendChild(fields);
+
+  if (step.type !== "exportCsv") {
+    const retryFields = document.createElement("div");
+    retryFields.className = "step-fields retry-fields";
+    textField(retryFields, "Повторов при ошибке", step.retries, (v) => { step.retries = v; scheduleSave(); });
+    textField(retryFields, "Задержка между попытками, мс", step.retryDelayMs, (v) => { step.retryDelayMs = v; scheduleSave(); });
+    selectField(
+      retryFields,
+      "Если не получилось",
+      [
+        ["stop", "Остановить макрос"],
+        ["skip", "Пропустить и продолжить"],
+      ],
+      step.onError || "stop",
+      (v) => { step.onError = v; scheduleSave(); }
+    );
+    card.appendChild(retryFields);
+  }
 
   if (step.type === "condition") {
     step.then = step.then || [];
@@ -366,16 +492,26 @@ function selectorFieldGroup(container, step) {
   const pickBtn = document.createElement("button");
   pickBtn.type = "button";
   pickBtn.textContent = "🎯";
-  pickBtn.title = "Выбрать элемент на целевой вкладке";
-  pickBtn.addEventListener("click", () => startPickFor(step, input));
-  rowWrap.appendChild(input);
-  rowWrap.appendChild(pickBtn);
+  pickBtn.title = "Выбрать элемент на целевой вкладке (в т.ч. внутри iframe)";
 
   const labelWrap = document.createElement("label");
   labelWrap.className = "wide";
   labelWrap.textContent = "Селектор";
   labelWrap.appendChild(rowWrap);
+  rowWrap.appendChild(input);
+  rowWrap.appendChild(pickBtn);
   container.appendChild(labelWrap);
+
+  const frameInput = textField(
+    container,
+    "Фрейм: URL содержит (пусто = основная страница)",
+    step.frameUrlIncludes,
+    (v) => { step.frameUrlIncludes = v; scheduleSave(); },
+    "напр. checkout или payments.example.com",
+    true
+  );
+
+  pickBtn.addEventListener("click", () => startPickFor(step, input, frameInput));
 }
 
 function renderStepFields(step, container) {
@@ -420,6 +556,94 @@ function renderStepFields(step, container) {
       textField(container, "Сохранить в переменную", step.varName, (v) => { step.varName = v; scheduleSave(); }, "result");
       checkboxField(container, "Собрать все совпадения списком", step.multiple, (v) => { step.multiple = v; scheduleSave(); });
       break;
+    case "extractTable": {
+      selectField(
+        container,
+        "Тип селектора строк",
+        [
+          ["css", "CSS-селектор"],
+          ["xpath", "XPath"],
+        ],
+        step.rowSelectorType,
+        (v) => { step.rowSelectorType = v; scheduleSave(); }
+      );
+      textField(
+        container,
+        "Селектор строк (каждое совпадение — одна строка таблицы)",
+        step.rowSelector,
+        (v) => { step.rowSelector = v; scheduleSave(); },
+        "tr, .product-card",
+        true
+      );
+      textField(container, "Сохранить в переменную", step.varName, (v) => { step.varName = v; scheduleSave(); }, "rows");
+      textField(
+        container,
+        "Фрейм: URL содержит (пусто = основная страница)",
+        step.frameUrlIncludes,
+        (v) => { step.frameUrlIncludes = v; scheduleSave(); },
+        "",
+        true
+      );
+
+      step.columns = step.columns && step.columns.length ? step.columns : [{ key: "col1", selector: "", attr: "text" }];
+      const colsLabel = document.createElement("label");
+      colsLabel.className = "wide";
+      colsLabel.textContent = "Колонки (селектор — относительно строки, пусто = вся строка)";
+      const colsWrap = document.createElement("div");
+      colsWrap.className = "inputs-table";
+      colsLabel.appendChild(colsWrap);
+      container.appendChild(colsLabel);
+
+      step.columns.forEach((col, i) => {
+        const row = document.createElement("div");
+        row.className = "input-param-row";
+        row.innerHTML = `
+          <input type="text" placeholder="имя колонки" value="${escapeHtml(col.key || "")}" data-f="key">
+          <input type="text" placeholder="селектор внутри строки" value="${escapeHtml(col.selector || "")}" data-f="sel">
+          <select data-f="attr">
+            <option value="text">Текст</option>
+            <option value="value">Value</option>
+            <option value="html">HTML</option>
+            <option value="href">href</option>
+            <option value="src">src</option>
+          </select>
+          <button type="button" class="pool-remove" title="Удалить колонку">×</button>
+        `;
+        row.querySelector('[data-f="attr"]').value = col.attr || "text";
+        row.querySelector('[data-f="key"]').addEventListener("input", (e) => { col.key = e.target.value.trim(); scheduleSave(); });
+        row.querySelector('[data-f="sel"]').addEventListener("input", (e) => { col.selector = e.target.value; scheduleSave(); });
+        row.querySelector('[data-f="attr"]').addEventListener("change", (e) => { col.attr = e.target.value; scheduleSave(); });
+        row.querySelector(".pool-remove").addEventListener("click", () => {
+          step.columns.splice(i, 1);
+          rerenderAll();
+          scheduleSave();
+        });
+        colsWrap.appendChild(row);
+      });
+
+      const addColBtn = document.createElement("button");
+      addColBtn.type = "button";
+      addColBtn.className = "secondary-btn";
+      addColBtn.style.cssText = "width:auto;margin:0;";
+      addColBtn.textContent = "+ Колонка";
+      addColBtn.addEventListener("click", () => {
+        step.columns.push({ key: "col" + (step.columns.length + 1), selector: "", attr: "text" });
+        rerenderAll();
+        scheduleSave();
+      });
+      container.appendChild(addColBtn);
+      break;
+    }
+    case "exportCsv":
+      textField(
+        container,
+        "Переменная с таблицей (результат «Извлечь таблицу»)",
+        step.sourceVar,
+        (v) => { step.sourceVar = v; scheduleSave(); },
+        "rows"
+      );
+      textField(container, "Имя файла (можно ${переменные})", step.filename, (v) => { step.filename = v; scheduleSave(); }, "export.csv");
+      break;
     case "condition":
       selectorFieldGroup(container, step);
       selectField(
@@ -459,6 +683,14 @@ function renderStepFields(step, container) {
       label.appendChild(ta);
       container.appendChild(label);
       textField(container, "Сохранить возвращённое значение в переменную (необязательно)", step.saveTo, (v) => { step.saveTo = v; scheduleSave(); });
+      textField(
+        container,
+        "Фрейм: URL содержит (пусто = основная страница)",
+        step.frameUrlIncludes,
+        (v) => { step.frameUrlIncludes = v; scheduleSave(); },
+        "",
+        true
+      );
       break;
     }
     case "keypress":
@@ -514,16 +746,30 @@ async function ensureContentScriptInTarget(tabId) {
   } catch (e) {}
 }
 
-async function startPickFor(step, inputEl) {
+async function startPickFor(step, inputEl, frameInputEl) {
   const tabId = getTargetTabId();
   if (!tabId) {
     alert("Выберите целевую вкладку сверху.");
     return;
   }
   await ensureContentScriptInTarget(tabId);
-  pickTargetField = { step, inputEl };
+  pickTargetField = { step, inputEl, frameInputEl };
+  // Сообщение без frameId уходит во ВСЕ фреймы вкладки (all_frames:true в manifest) -
+  // пипетка сработает там, где физически произошёл клик, включая iframe.
   chrome.tabs.sendMessage(tabId, { action: "startPicker" });
   chrome.tabs.update(tabId, { active: true });
+}
+
+async function runSingleStep(step) {
+  const tabId = getTargetTabId();
+  if (!tabId) {
+    alert("Выберите целевую вкладку сверху.");
+    return;
+  }
+  logPanel.innerHTML = "";
+  currentRunId = uid("run");
+  const miniMacro = { id: "single", name: "(один шаг)", openInNewTab: false, inputs: [], triggers: [], steps: [step] };
+  chrome.runtime.sendMessage({ action: "runMacro", macro: miniMacro, inputValues: {}, runId: currentRunId, tabId });
 }
 
 recordBtn.addEventListener("click", async () => {
@@ -544,13 +790,24 @@ function handleRecordedEvent(msg) {
   if (msg.kind === "navigate") {
     current.steps.push({ ...defaultStep("navigate"), url: msg.url });
   } else if (msg.kind === "click") {
-    current.steps.push({ ...defaultStep("click"), selectorType: "css", selector: msg.selector });
+    current.steps.push({
+      ...defaultStep("click"),
+      selectorType: "css",
+      selector: msg.selector,
+      frameUrlIncludes: msg.frameUrl || "",
+    });
   } else if (msg.kind === "type") {
     const last = current.steps[current.steps.length - 1];
     if (last && last.type === "type" && last.selector === msg.selector) {
       last.value = msg.value;
     } else {
-      current.steps.push({ ...defaultStep("type"), selectorType: "css", selector: msg.selector, value: msg.value });
+      current.steps.push({
+        ...defaultStep("type"),
+        selectorType: "css",
+        selector: msg.selector,
+        value: msg.value,
+        frameUrlIncludes: msg.frameUrl || "",
+      });
     }
   }
   rerenderAll();
@@ -562,6 +819,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     pickTargetField.step.selectorType = "css";
     pickTargetField.step.selector = msg.selector;
     pickTargetField.inputEl.value = msg.selector;
+    if (pickTargetField.frameInputEl) {
+      pickTargetField.step.frameUrlIncludes = msg.frameUrl || "";
+      pickTargetField.frameInputEl.value = msg.frameUrl || "";
+    }
     pickTargetField = null;
     window.focus();
     scheduleSave();
@@ -674,6 +935,7 @@ importInput.addEventListener("change", async () => {
     for (const m of items) {
       m.id = uid("m");
       m.inputs = m.inputs || [];
+      m.triggers = m.triggers || [];
       m.steps = m.steps || [];
       allMacros.push(m);
     }

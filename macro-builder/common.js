@@ -24,6 +24,7 @@ export function newMacro(name = "Новый макрос") {
     updatedAt: Date.now(),
     openInNewTab: false,
     inputs: [],
+    triggers: [],
     steps: [],
   };
 }
@@ -35,51 +36,108 @@ export function substitute(str, vars) {
   return str.replace(/\$\{([a-zA-Z_]\w*)\}/g, (_, key) => (key in vars ? String(vars[key]) : ""));
 }
 
+// Общие для ЛЮБОГО шага поля политики повтора при ошибке - добавляются поверх
+// специфичных для типа полей, а не как отдельный тип шага.
+const RETRY_DEFAULTS = { retries: 0, retryDelayMs: 800, onError: "stop" };
+
 export function defaultStep(type) {
   const id = uid();
+  let step;
   switch (type) {
     case "navigate":
-      return { id, type, url: "https://" };
+      step = { id, type, url: "https://" };
+      break;
     case "click":
-      return { id, type, selectorType: "css", selector: "", index: 0, timeoutMs: 8000 };
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", index: 0, timeoutMs: 8000 };
+      break;
     case "type":
-      return {
+      step = {
         id,
         type,
         selectorType: "css",
         selector: "",
+        frameUrlIncludes: "",
         index: 0,
         value: "",
         clear: true,
         pressEnter: false,
         timeoutMs: 8000,
       };
+      break;
     case "wait":
-      return { id, type, ms: 1000 };
+      step = { id, type, ms: 1000 };
+      break;
     case "waitFor":
-      return { id, type, selectorType: "css", selector: "", timeoutMs: 15000 };
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", timeoutMs: 15000 };
+      break;
     case "extract":
-      return { id, type, selectorType: "css", selector: "", index: 0, attr: "text", varName: "result", multiple: false };
+      step = {
+        id,
+        type,
+        selectorType: "css",
+        selector: "",
+        frameUrlIncludes: "",
+        index: 0,
+        attr: "text",
+        varName: "result",
+        multiple: false,
+      };
+      break;
+    case "extractTable":
+      step = {
+        id,
+        type,
+        rowSelectorType: "css",
+        rowSelector: "",
+        frameUrlIncludes: "",
+        varName: "rows",
+        columns: [{ key: "col1", selector: "", attr: "text" }],
+      };
+      break;
+    case "exportCsv":
+      step = { id, type, sourceVar: "rows", filename: "export.csv" };
+      break;
     case "condition":
-      return { id, type, selectorType: "css", selector: "", mode: "exists", timeoutMs: 3000, then: [], else: [] };
+      step = {
+        id,
+        type,
+        selectorType: "css",
+        selector: "",
+        frameUrlIncludes: "",
+        mode: "exists",
+        timeoutMs: 3000,
+        then: [],
+        else: [],
+      };
+      break;
     case "loopCount":
-      return { id, type, count: "3", itemVar: "i", steps: [] };
+      step = { id, type, count: "3", itemVar: "i", steps: [] };
+      break;
     case "loopList":
-      return { id, type, sourceKey: "", itemVar: "item", steps: [] };
+      step = { id, type, sourceKey: "", itemVar: "item", steps: [] };
+      break;
     case "customJs":
-      return {
+      step = {
         id,
         type,
         code: "// vars - переменные макроса\n// helpers.$(sel) / helpers.$$(sel) / await helpers.sleep(ms)\nreturn null;",
         saveTo: "",
+        frameUrlIncludes: "",
       };
+      break;
     case "keypress":
-      return { id, type, key: "Enter" };
+      step = { id, type, key: "Enter" };
+      break;
     case "scroll":
-      return { id, type, mode: "bottom", selectorType: "css", selector: "" };
+      step = { id, type, mode: "bottom", selectorType: "css", selector: "", frameUrlIncludes: "" };
+      break;
     default:
-      return { id, type };
+      step = { id, type };
   }
+  // exportCsv не выполняется на странице и не имеет смысла повторять по таймауту
+  // элемента - retry ему не нужен, оставляем как есть.
+  if (type === "exportCsv") return step;
+  return { ...step, ...RETRY_DEFAULTS };
 }
 
 export const STEP_LABELS = {
@@ -89,6 +147,8 @@ export const STEP_LABELS = {
   wait: "Пауза (мс)",
   waitFor: "Дождаться элемента",
   extract: "Извлечь данные",
+  extractTable: "Извлечь таблицу",
+  exportCsv: "Экспорт в CSV",
   condition: "Условие (элемент найден?)",
   loopCount: "Повторить N раз",
   loopList: "Для каждого значения из списка",
@@ -100,7 +160,32 @@ export const STEP_LABELS = {
 export const STEP_GROUPS = [
   { label: "Навигация", types: ["navigate", "wait", "waitFor", "scroll"] },
   { label: "Взаимодействие", types: ["click", "type", "keypress"] },
-  { label: "Данные", types: ["extract"] },
+  { label: "Данные", types: ["extract", "extractTable", "exportCsv"] },
   { label: "Логика", types: ["condition", "loopCount", "loopList"] },
   { label: "Код", types: ["customJs"] },
 ];
+
+// Шаги, у которых есть смысл в поле "селектор + фрейм" (используется builder.js,
+// чтобы не дублировать список типов в разметке).
+export const SELECTOR_STEP_TYPES = ["click", "type", "waitFor", "extract", "extractTable", "condition"];
+
+export function newTrigger(type) {
+  const id = uid("t");
+  if (type === "interval") return { id, type: "interval", everyMinutes: 60, enabled: true };
+  if (type === "daily") return { id, type: "daily", atTime: "09:00", enabled: true };
+  if (type === "urlMatch") return { id, type: "urlMatch", pattern: "https://example.com/*", enabled: true };
+  return { id, type, enabled: true };
+}
+
+export const TRIGGER_LABELS = {
+  interval: "Через интервал",
+  daily: "Каждый день в",
+  urlMatch: "При открытии URL",
+};
+
+// Простой glob (только *) -> RegExp, используется и в background.js (для сравнения
+// с реальным URL вкладки), и потенциально в UI для валидации.
+export function patternToRegex(pattern) {
+  const esc = String(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp("^" + esc + "$");
+}

@@ -116,6 +116,30 @@
     return readValue(el, step.attr);
   }
 
+  function queryInRow(row, selectorType, selector) {
+    if (!selector) return row;
+    try {
+      if (selectorType === "xpath") {
+        return document.evaluate(selector, row, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      }
+      return row.querySelector(selector);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function execExtractTable(step) {
+    const rows = queryAll({ selectorType: step.rowSelectorType, selector: step.rowSelector });
+    return rows.map((row) => {
+      const obj = {};
+      for (const col of step.columns || []) {
+        const cellEl = queryInRow(row, col.selectorType, col.selector);
+        obj[col.key || ""] = cellEl ? readValue(cellEl, col.attr) : "";
+      }
+      return obj;
+    });
+  }
+
   async function execKeypress(step) {
     const el = document.activeElement || document.body;
     const key = step.key || "Enter";
@@ -139,20 +163,12 @@
     return { exists: queryAll(step).length > 0 };
   }
 
-  async function execCustomJs(step, vars) {
-    const helpers = {
-      $: (s) => document.querySelector(s),
-      $$: (s) => Array.from(document.querySelectorAll(s)),
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    };
-    // Оборачиваем тело в async IIFE, чтобы в пользовательском коде можно было
-    // просто писать return/await, не объявляя саму функцию async.
-    const runner = new Function("vars", "helpers", `return (async () => {\n${step.code}\n})();`);
-    const value = await runner(vars, helpers);
-    return value === undefined ? null : value;
-  }
+  // customJs сюда не попадает - изолированный мир content-скрипта имеет свою
+  // собственную CSP, запрещающую new Function()/eval независимо от страницы,
+  // поэтому такие шаги background.js выполняет отдельно через
+  // chrome.scripting.executeScript({world:"MAIN"}), минуя content.js целиком.
 
-  async function handleExec(step, vars) {
+  async function handleExec(step) {
     switch (step.type) {
       case "click":
         return { ok: true, value: await execClick(step) };
@@ -162,12 +178,12 @@
         return { ok: true, value: await execWaitFor(step) };
       case "extract":
         return { ok: true, value: await execExtract(step) };
+      case "extractTable":
+        return { ok: true, value: await execExtractTable(step) };
       case "keypress":
         return { ok: true, value: await execKeypress(step) };
       case "scroll":
         return { ok: true, value: await execScroll(step) };
-      case "customJs":
-        return { ok: true, value: await execCustomJs(step, vars || {}) };
       default:
         return { ok: false, error: "Неизвестный тип шага: " + step.type };
     }
@@ -175,7 +191,7 @@
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === "exec") {
-      handleExec(msg.step, msg.vars)
+      handleExec(msg.step)
         .then(sendResponse)
         .catch((e) => sendResponse({ ok: false, error: e.message }));
       return true;
@@ -272,6 +288,7 @@
       action: "pickerResult",
       selector: buildSelector(el),
       text: (el.textContent || "").trim().slice(0, 80),
+      frameUrl: window !== window.top ? location.href : "",
     });
   }
 
@@ -306,6 +323,7 @@
       kind: "click",
       selector: buildSelector(el),
       text: (el.textContent || "").trim().slice(0, 60),
+      frameUrl: window !== window.top ? location.href : "",
     });
   }
 
@@ -317,6 +335,7 @@
       kind: "type",
       selector: buildSelector(el),
       value: el.value,
+      frameUrl: window !== window.top ? location.href : "",
     });
   }
 
