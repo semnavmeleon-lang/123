@@ -6,6 +6,7 @@ import base64
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
@@ -233,6 +234,149 @@ class RealImaplibTests(Base):
         self.assertEqual(m.run_once(self.cfg, self.state), 0)
         (name,) = [p.name for p in self.printed.iterdir()]
         self.assertIn("Отправил клиенту", name)
+
+
+# ---------------------------------------------------------------- Outlook (заглушки COM-объектов)
+
+class FakeProp:
+    def __init__(self, cid):
+        self.cid = cid
+
+    def GetProperty(self, name):
+        if not self.cid:
+            raise RuntimeError("нет такого свойства")  # так COM ведёт себя у обычных вложений
+        return self.cid
+
+
+class FakeAtt:
+    def __init__(self, name, data=b"x" * 2048, cid=""):
+        self.FileName, self.Size, self._data, self.PropertyAccessor = name, len(data), data, FakeProp(cid)
+
+    def SaveAsFile(self, path):
+        Path(path).write_bytes(self._data)
+
+
+class FakeAtts:
+    def __init__(self, atts):
+        self._atts, self.Count = atts, len(atts)
+
+    def Item(self, i):  # в COM нумерация с 1
+        return self._atts[i - 1]
+
+
+class FakeItem:
+    Class = 43
+
+    def __init__(self, eid, subject, sent_on, html="", body="Привет", atts=(), to="Вася Иванов; Петя Сидоров"):
+        self.EntryID, self.Subject, self.SentOn, self.HTMLBody, self.Body = eid, subject, sent_on, html, body
+        self.SenderName, self.To, self.CC, self.Attachments = "Я Сам", to, "", FakeAtts(list(atts))
+
+
+class FakeItems(list):
+    def Sort(self, prop, descending):
+        assert prop == "[SentOn]"
+        self.sort(key=lambda i: i.SentOn, reverse=descending)
+
+
+def at(hour, minute=0, day=29):
+    return datetime(2026, 9, day, hour, minute)
+
+
+class OutlookTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.cfg.backend = "outlook"
+
+    def run_outlook(self, items, **kw):
+        return m.run_once_outlook(self.cfg, self.state, items, **kw)
+
+    def test_baseline_then_only_new(self):
+        items = FakeItems([FakeItem("A", "старое", at(9)), FakeItem("B", "тоже старое", at(10))])
+        self.assertEqual(self.run_outlook(items), 0)
+        self.assertEqual(list(self.printed.iterdir()), [])
+        items.append(FakeItem("C", "Новое из Outlook", at(11)))
+        self.assertEqual(self.run_outlook(items), 1)
+        self.assertEqual(self.run_outlook(items), 0)
+        (name,) = [p.name for p in self.printed.iterdir()]
+        self.assertIn("Новое из Outlook", name)
+        self.assertIn("2026-09-29_110000", name)
+
+    def test_all_backfills_oldest_first_and_since_filters(self):
+        items = FakeItems([FakeItem("A", "a", at(9, day=1)), FakeItem("B", "b", at(9, day=15)), FakeItem("C", "c", at(9, day=28))])
+        self.assertEqual(self.run_outlook(items, backfill_all=True), 3)
+        self.state = m.State(str(self.tmp / "s2.json"))
+        self.assertEqual(self.run_outlook(items, since=datetime(2026, 9, 10)), 2)
+
+    def test_late_arriving_message_inside_lookback_is_not_lost(self):
+        items = FakeItems([FakeItem("A", "a", at(10))])
+        self.run_outlook(items)
+        items.append(FakeItem("B", "b", at(11)))
+        self.assertEqual(self.run_outlook(items), 1)
+        items.append(FakeItem("L", "поздно доехало", at(10, 30)))  # старше watermark, но в пределах окна
+        self.assertEqual(self.run_outlook(items), 1)
+        self.assertEqual(self.run_outlook(items), 0)
+
+    def test_unsent_sentinel_date_and_non_mail_items_are_ignored(self):
+        weird = FakeItem("W", "черновик", datetime(2026, 1, 1))
+        weird.SentOn, weird.CreationTime = datetime(4501, 1, 1), at(8)
+        meeting = FakeItem("M", "встреча", at(9))
+        meeting.Class = 53
+        items = FakeItems([FakeItem("A", "a", at(10)), weird, meeting])
+        self.assertEqual(self.run_outlook(items), 0)  # baseline
+        items.append(FakeItem("N", "n", at(12)))
+        self.assertEqual(self.run_outlook(items), 1)
+
+    def test_failed_print_blocks_queue_then_gives_up_and_continues(self):
+        items = FakeItems([FakeItem("A", "a", at(9))])
+        self.run_outlook(items)
+        items.extend([FakeItem("B", "плохое", at(10)), FakeItem("C", "после плохого", at(11))])
+        self.cfg.print_cmd = "false {file}"
+        self.assertEqual(self.run_outlook(items), 0)  # попытка 1: стоп, C не трогаем
+        self.assertEqual(self.run_outlook(items), 0)  # попытка 2
+        self.cfg.print_cmd = f"cp {{file}} {self.printed}/"
+        self.assertEqual(self.run_outlook(items), 2)  # принтер ожил: B и потом C, в порядке отправки
+        self.assertEqual(sorted(p.name[:17] for p in self.printed.iterdir()), ["2026-09-29_100000", "2026-09-29_110000"])
+
+    def test_gives_up_after_max_attempts(self):
+        items = FakeItems([FakeItem("A", "a", at(9))])
+        self.run_outlook(items)
+        items.extend([FakeItem("B", "плохое", at(10)), FakeItem("C", "после", at(11))])
+        self.cfg.print_cmd = "false {file}"
+        for _ in range(m.MAX_ATTEMPTS - 1):
+            self.assertEqual(self.run_outlook(items), 0)
+        # на последней попытке B отбрасывается, а C в этом же проходе тоже падает (принтер всё ещё сломан)
+        self.assertEqual(self.run_outlook(items), 0)
+        self.cfg.print_cmd = f"cp {{file}} {self.printed}/"
+        items.append(FakeItem("D", "свежее", at(12)))
+        self.assertEqual(self.run_outlook(items), 2)  # C (ей нужна ещё попытка) и D; B больше не всплывает
+        self.assertNotIn("плохое", " ".join(p.name for p in self.printed.iterdir()))
+
+    def test_inline_image_attachment_and_plain_text_conversion(self):
+        html_body = '<html><body><p>Счёт</p><img src="cid:logo@x"></body></html>'
+        item = FakeItem("A", "Счёт №7", at(9), html=html_body,
+                        atts=[FakeAtt("logo.png", PNG, cid="logo@x"), FakeAtt("счёт.xlsx"), FakeAtt("unused.png", PNG, cid="zzz")])
+        with tempfile.TemporaryDirectory() as tmp:
+            mail = m.mail_from_outlook(item, Path(tmp))
+        self.assertIn("data:image/png;base64,", m.render_html(mail))
+        self.assertEqual(sorted(mail.attachments), [f"unused.png ({m._fmt_size(len(PNG))})", "счёт.xlsx (2.0 КБ)"])
+        self.assertIn(("Кому", "Вася Иванов; Петя Сидоров"), mail.headers)
+        plain = m.mail_from_outlook(FakeItem("B", "t", at(9), html="", body="<b>не html</b> & co"), Path(tmp))
+        self.assertFalse(plain.is_html)
+        self.assertIn("&lt;b&gt;", m.render_html(plain))
+
+    def test_outlook_pdf_contains_text(self):
+        items = FakeItems([FakeItem("A", "a", at(9))])
+        self.run_outlook(items)
+        items.append(FakeItem("B", "Договор №12", at(10), body="Прошу подписать договор"))
+        self.run_outlook(items)
+        (pdf,) = (self.tmp / "out").iterdir()
+        try:
+            from pypdf import PdfReader
+        except BaseException:
+            self.skipTest("pypdf не установлен")
+        text = "".join(pg.extract_text() for pg in PdfReader(pdf).pages)
+        for needle in ("Договор №12", "Прошу подписать", "Вася Иванов"):
+            self.assertIn(needle, text)
 
 
 class ImapHelpersTests(unittest.TestCase):

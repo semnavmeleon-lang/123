@@ -1,1 +1,2 @@
 playwright>=1.40
+pywin32; sys_platform == "win32"   # нужен только для backend = outlook

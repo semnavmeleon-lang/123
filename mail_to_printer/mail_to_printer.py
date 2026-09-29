@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Отправленные письма -> PDF -> (виртуальный) принтер.
 
-Скрипт подключается к почтовому ящику по IMAP, находит папку «Отправленные»,
-берёт письма, которых он ещё не обрабатывал, превращает каждое в PDF
-(через headless Chromium) и отправляет этот PDF на указанный принтер
-и/или складывает в папку.
+Скрипт берёт письма из папки «Отправленные», которых он ещё не обрабатывал,
+превращает каждое в PDF (через headless Chromium) и отправляет этот PDF
+на указанный принтер и/или складывает в папку.
+
+Откуда берутся письма ([mail] backend в config.ini):
+  imap     — по IMAP (Gmail, Яндекс, Mail.ru, Exchange с включённым IMAP и паролем);
+  outlook  — напрямую из установленного на Windows Outlook (COM), без паролей и OAuth:
+             подходит для корпоративного Outlook/Microsoft 365, где IMAP по паролю отключён.
 
 Запуск:
     python mail_to_printer.py --config config.ini            # один проход (для cron / Планировщика)
@@ -19,9 +23,11 @@ import email
 import email.policy
 import email.utils
 import html
+import hashlib
 import imaplib
 import json
 import logging
+import mimetypes
 import os
 import re
 import shlex
@@ -30,8 +36,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -49,7 +55,8 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 
 @dataclass
 class Config:
-    host: str
+    backend: str = "imap"          # imap | outlook
+    host: str = ""
     port: int = 993
     ssl: bool = True
     user: str = ""
@@ -61,7 +68,7 @@ class Config:
     state_file: str = "state.json"
     poll_seconds: int = 60
     load_remote_images: bool = False
-    browser_path: str = ""         # путь к chrome/chromium/msedge; пусто = браузер Playwright
+    browser_path: str = ""         # msedge | chrome | путь к браузеру; пусто = браузер Playwright
 
 
 def load_config(path: str) -> Config:
@@ -70,10 +77,11 @@ def load_config(path: str) -> Config:
         sys.exit(f"Не найден файл настроек: {path} (скопируйте config.example.ini)")
     m, o = cp["mail"], cp["output"] if cp.has_section("output") else {}
     cfg = Config(
-        host=m["host"],
+        backend=m.get("backend", "imap").strip().lower(),
+        host=m.get("host", "").strip(),
         port=m.getint("port", 993),
         ssl=m.getboolean("ssl", True),
-        user=m["user"],
+        user=m.get("user", "").strip(),
         password=os.environ.get("MAIL_PASSWORD") or m.get("password", ""),
         sent_folder=m.get("sent_folder", "").strip(),
         printer=(o.get("printer", "") if o else "").strip(),
@@ -84,9 +92,14 @@ def load_config(path: str) -> Config:
         load_remote_images=str(o.get("load_remote_images", "no")).lower() in ("1", "yes", "true", "on") if o else False,
         browser_path=(o.get("browser_path", "") if o else "").strip(),
     )
-    if not cfg.password:
-        sys.exit("Пароль не задан: укажите его в переменной окружения MAIL_PASSWORD "
-                 "или в [mail] password (для Gmail/Яндекс/Mail.ru нужен пароль приложения).")
+    if cfg.backend not in ("imap", "outlook"):
+        sys.exit(f"[mail] backend = {cfg.backend!r}: допустимо imap или outlook")
+    if cfg.backend == "imap":
+        if not cfg.host or not cfg.user:
+            sys.exit("Для backend = imap нужны [mail] host и user.")
+        if not cfg.password:
+            sys.exit("Пароль не задан: укажите его в переменной окружения MAIL_PASSWORD "
+                     "или в [mail] password (для Gmail/Яндекс/Mail.ru нужен пароль приложения).")
     if not cfg.printer and not cfg.output_dir:
         sys.exit("В [output] нужно указать printer и/или output_dir, иначе PDF некуда девать.")
     return cfg
@@ -197,8 +210,19 @@ def _fmt_size(n: int) -> str:
     return ""
 
 
-def message_to_html(msg: EmailMessage) -> str:
-    """Собрать самодостаточный HTML: шапка письма + тело + список вложений."""
+@dataclass
+class Mail:
+    """Письмо в нейтральном виде: не важно, откуда оно пришло (IMAP или Outlook)."""
+    subject: str
+    sent_at: datetime | None
+    headers: list[tuple[str, str]]          # (подпись, значение) для шапки в PDF
+    body: str
+    is_html: bool
+    cids: dict[str, str] = field(default_factory=dict)   # Content-ID -> data:URI встроенной картинки
+    attachments: list[str] = field(default_factory=list)  # «имя (размер)»
+
+
+def mail_from_email(msg: EmailMessage) -> Mail:
     body = msg.get_body(preferencelist=("html", "plain"))
     if body is None:
         content, is_html = "", False
@@ -209,32 +233,40 @@ def message_to_html(msg: EmailMessage) -> str:
             content = body.get_payload(decode=True).decode("utf-8", "replace")
         is_html = body.get_content_subtype() == "html"
 
+    cids = {}
     if is_html:
-        # inline-картинки: cid:xxx -> data:URI, чтобы они попали в PDF
-        cids = {}
         for part in msg.walk():
             cid = part.get("Content-ID")
             if cid and part.get_content_maintype() == "image":
                 data = part.get_payload(decode=True) or b""
                 cids[cid.strip("<>")] = f"data:{part.get_content_type()};base64,{base64.b64encode(data).decode()}"
-        content = re.sub(r'cid:([^"\'\s)>]+)', lambda m: cids.get(m[1], m[0]), content, flags=re.I)
-    else:
-        content = f'<pre style="white-space:pre-wrap;font-family:inherit;margin:0">{html.escape(content)}</pre>'
 
-    rows = []
-    for label, header in (("От", "From"), ("Кому", "To"), ("Копия", "Cc"), ("Дата", "Date"), ("Тема", "Subject")):
-        value = msg.get(header)
-        if value:
-            rows.append(f"<tr><th>{label}:</th><td>{html.escape(str(value))}</td></tr>")
-
+    try:
+        sent_at = email.utils.parsedate_to_datetime(msg["Date"]) if msg["Date"] else None
+    except (TypeError, ValueError):
+        sent_at = None
+    headers = [(label, str(msg[h])) for label, h in
+               (("От", "From"), ("Кому", "To"), ("Копия", "Cc"), ("Дата", "Date"), ("Тема", "Subject")) if msg.get(h)]
     attachments = [
-        f"{html.escape(p.get_filename() or '(без имени)')} ({_fmt_size(len(p.get_payload(decode=True) or b''))})"
-        for p in msg.iter_attachments()
-        if p.get_content_disposition() == "attachment"
+        f"{p.get_filename() or '(без имени)'} ({_fmt_size(len(p.get_payload(decode=True) or b''))})"
+        for p in msg.iter_attachments() if p.get_content_disposition() == "attachment"
     ]
-    att_html = ("<div class='att'><b>Вложения:</b> " + "; ".join(attachments) + "</div>") if attachments else ""
+    return Mail(str(msg.get("Subject") or "(без темы)"), sent_at, headers, content, is_html, cids, attachments)
 
-    header_html = f"<div class='mailhdr'><table>{''.join(rows)}</table></div>{att_html}"
+
+def render_html(mail: Mail) -> str:
+    """Собрать самодостаточный HTML: шапка письма + тело + список вложений."""
+    if mail.is_html:
+        # inline-картинки: cid:xxx -> data:URI, чтобы они попали в PDF
+        content = re.sub(r'cid:([^"\'\s)>]+)', lambda m: mail.cids.get(m[1], m[0]), mail.body, flags=re.I)
+    else:
+        content = f'<pre style="white-space:pre-wrap;font-family:inherit;margin:0">{html.escape(mail.body)}</pre>'
+
+    rows = "".join(f"<tr><th>{label}:</th><td>{html.escape(value)}</td></tr>" for label, value in mail.headers)
+    att_html = ("<div class='att'><b>Вложения:</b> " + "; ".join(html.escape(a) for a in mail.attachments) + "</div>"
+                ) if mail.attachments else ""
+
+    header_html = f"<div class='mailhdr'><table>{rows}</table></div>{att_html}"
     style = (
         "<meta charset='utf-8'><style>"
         "body{font-family:'Segoe UI',Arial,'DejaVu Sans',sans-serif}"
@@ -248,6 +280,10 @@ def message_to_html(msg: EmailMessage) -> str:
     return f"<!doctype html><html><head>{style}</head><body>{header_html}{content}</body></html>"
 
 
+def message_to_html(msg: EmailMessage) -> str:
+    return render_html(mail_from_email(msg))
+
+
 # --------------------------------------------------------------------------- HTML -> PDF
 
 class PdfRenderer:
@@ -259,7 +295,10 @@ class PdfRenderer:
     def __enter__(self):
         from playwright.sync_api import sync_playwright  # импорт тут, чтобы --help работал без Playwright
         self._pw = sync_playwright().start()
-        kwargs = {"executable_path": self.browser_path} if self.browser_path else {}
+        if self.browser_path.lower() in ("msedge", "chrome"):  # уже установленный в системе браузер, скачивать ничего не надо
+            kwargs = {"channel": self.browser_path.lower()}
+        else:
+            kwargs = {"executable_path": self.browser_path} if self.browser_path else {}
         as_root = hasattr(os, "geteuid") and os.geteuid() == 0  # в контейнерах Chromium от root без этого не стартует
         self._browser = self._pw.chromium.launch(args=["--no-sandbox"] if as_root else [], **kwargs)
         return self
@@ -306,24 +345,19 @@ def send_to_printer(cfg: Config, pdf: Path, title: str) -> None:
 
 # --------------------------------------------------------------------------- основной цикл
 
-def process_message(cfg: Config, renderer: PdfRenderer, raw: bytes, uid: int) -> str:
-    msg = email.message_from_bytes(raw, policy=email.policy.default)
-    subject = str(msg.get("Subject") or "(без темы)")
-    try:
-        sent_at = email.utils.parsedate_to_datetime(msg["Date"]) if msg["Date"] else None
-    except (TypeError, ValueError):
-        sent_at = None
-    stamp = (sent_at or datetime.now()).strftime("%Y-%m-%d_%H%M%S")
-    filename = f"{stamp}_{uid}_{_safe_name(subject)}.pdf"
+def process_message(cfg: Config, renderer: PdfRenderer, mail: Mail, tag: str) -> str:
+    """Письмо -> PDF -> принтер и/или output_dir. tag делает имя файла уникальным."""
+    stamp = (mail.sent_at or datetime.now()).strftime("%Y-%m-%d_%H%M%S")
+    filename = f"{stamp}_{tag}_{_safe_name(mail.subject)}.pdf"
 
     keep_dir = Path(cfg.output_dir) if cfg.output_dir else None
     if keep_dir:
         keep_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         pdf = (keep_dir or Path(tmp)) / filename
-        renderer.render(message_to_html(msg), pdf)
+        renderer.render(render_html(mail), pdf)
         if cfg.printer:
-            send_to_printer(cfg, pdf, subject)
+            send_to_printer(cfg, pdf, mail.subject)
     return filename
 
 
@@ -374,7 +408,8 @@ def run_once(cfg: Config, state: State, *, backfill_all: bool = False, since: da
                 try:
                     typ, msg_data = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
                     raw = next(p[1] for p in msg_data if isinstance(p, tuple))
-                    name = process_message(cfg, renderer, raw, uid)
+                    mail = mail_from_email(email.message_from_bytes(raw, policy=email.policy.default))
+                    name = process_message(cfg, renderer, mail, str(uid))
                     entry["pending"].pop(str(uid), None)
                     log.info("OK  uid=%d -> %s", uid, name)
                     done += 1
@@ -390,6 +425,153 @@ def run_once(cfg: Config, state: State, *, backfill_all: bool = False, since: da
             imap.logout()
         except Exception:
             pass
+
+
+# --------------------------------------------------------------------------- Outlook (COM, только Windows)
+#
+# Работает с классическим Outlook, установленным на этом же компьютере (не «новый Outlook» и не веб-версия):
+# ни IMAP, ни пароля, ни регистрации приложения в Azure не нужно — используется уже настроенная учётка.
+
+OL_FOLDER_SENT_MAIL = 5   # olFolderSentMail
+OL_MAIL_ITEM = 43         # olMail
+PR_ATTACH_CONTENT_ID = "http://schemas.microsoft.com/mapi/proptag/0x3712001F"
+OUTLOOK_LOOKBACK = timedelta(hours=3)   # перестраховка: письмо могло «доехать» в Отправленные с опозданием / перевод часов
+OUTLOOK_MAX_DONE = 1000                 # сколько EntryID помним в state.json
+EPOCH = datetime(1970, 1, 1)
+
+
+def open_outlook_sent_items():
+    try:
+        import win32com.client
+    except ImportError:
+        sys.exit("Для backend = outlook нужен pywin32 (только Windows):  pip install pywin32")
+    try:
+        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        return ns.GetDefaultFolder(OL_FOLDER_SENT_MAIL).Items
+    except Exception as exc:
+        raise RuntimeError("Не удалось подключиться к Outlook. Нужен установленный классический Outlook "
+                           "(не «новый Outlook»), запущенный под тем же пользователем, что и скрипт.") from exc
+
+
+def _outlook_time(item) -> datetime | None:
+    """Время отправки как «наивная» дата: ровно то, что показывает Outlook (в разных версиях pywin32 tz-метка врёт)."""
+    for attr in ("SentOn", "CreationTime"):
+        try:
+            dt = getattr(item, attr)
+        except Exception:
+            continue
+        if dt and dt.year < 3000:   # у неотправленных писем в SentOn стоит 4501 год
+            return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+    return None
+
+
+def _outlook_cid(att) -> str:
+    try:
+        return att.PropertyAccessor.GetProperty(PR_ATTACH_CONTENT_ID) or ""
+    except Exception:
+        return ""
+
+
+def mail_from_outlook(item, tmpdir: Path) -> Mail:
+    sent_at = _outlook_time(item)
+    subject = str(item.Subject or "(без темы)")
+    headers = [(label, str(getattr(item, attr, "") or "")) for label, attr in
+               (("От", "SenderName"), ("Кому", "To"), ("Копия", "CC"))]
+    headers = [(label, v) for label, v in headers if v]
+    if sent_at:
+        headers.append(("Дата", sent_at.strftime("%d.%m.%Y %H:%M")))
+    headers.append(("Тема", subject))
+
+    html_body = str(item.HTMLBody or "")
+    is_html = bool(html_body.strip())
+    body = html_body if is_html else str(item.Body or "")
+
+    cids, attachments = {}, []
+    for i in range(1, item.Attachments.Count + 1):
+        att = item.Attachments.Item(i)
+        name = str(att.FileName or "(без имени)")
+        cid = _outlook_cid(att)
+        if is_html and cid and f"cid:{cid}".lower() in html_body.lower():
+            path = tmpdir / f"att{i}"
+            att.SaveAsFile(str(path))
+            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            cids[cid] = f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+        else:
+            try:
+                attachments.append(f"{name} ({_fmt_size(int(att.Size))})")
+            except Exception:
+                attachments.append(name)
+    return Mail(subject, sent_at, headers, body, is_html, cids, attachments)
+
+
+def run_once_outlook(cfg: Config, state: State, items, *, backfill_all: bool = False,
+                     since: datetime | None = None) -> int:
+    """Один проход по «Отправленным» Outlook. items — коллекция Items папки (или её заглушка в тестах).
+
+    Состояние: watermark (время самого свежего обработанного письма) + список EntryID обработанных.
+    Письма сканируются от новых к старым до watermark - OUTLOOK_LOOKBACK, уже обработанные отсеиваются по EntryID.
+    """
+    key = "outlook|sent"
+    items.Sort("[SentOn]", True)  # от новых к старым; сортируем на стороне Outlook, не через Restrict (он зависит от локали)
+
+    def mails_since(cutoff: datetime | None):
+        for item in items:
+            if getattr(item, "Class", None) != OL_MAIL_ITEM:
+                continue
+            t = _outlook_time(item)
+            if t is None:
+                continue
+            if cutoff is not None and t < cutoff:
+                return
+            yield t, item
+
+    entry = state.get(key)
+    if entry is None:
+        if backfill_all or since:
+            floor = since or EPOCH
+            entry = {"watermark": floor.isoformat(), "floor": floor.isoformat(), "done": [], "attempts": {}}
+            log.info("Первый запуск: обработаю старые письма начиная с %s", floor.date() if since else "самого начала")
+        else:
+            latest = next(mails_since(None), None)
+            newest = latest[0] if latest else datetime.now().replace(microsecond=0)
+            skipped = [it.EntryID for _, it in mails_since(newest - OUTLOOK_LOOKBACK)]
+            entry = {"watermark": newest.isoformat(), "floor": EPOCH.isoformat(), "done": skipped[-OUTLOOK_MAX_DONE:], "attempts": {}}
+            state.set(key, entry)
+            log.info("Первый запуск: существующие письма пропущены, дальше обрабатываю только новые. "
+                     "Чтобы обработать и старые — удалите state-файл и запустите с --all или --since ГГГГ-ММ-ДД.")
+            return 0
+
+    watermark = datetime.fromisoformat(entry["watermark"])
+    cutoff = max(watermark - OUTLOOK_LOOKBACK, datetime.fromisoformat(entry["floor"]))
+    done = set(entry["done"])
+    todo = sorted(((t, it) for t, it in mails_since(cutoff) if it.EntryID not in done), key=lambda x: x[0])
+    if not todo:
+        log.debug("Новых писем нет")
+        return 0
+
+    processed = 0
+    with PdfRenderer(cfg.browser_path, cfg.load_remote_images) as renderer:
+        for t, item in todo:
+            eid = item.EntryID
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    name = process_message(cfg, renderer, mail_from_outlook(item, Path(tmp)),
+                                           hashlib.sha1(eid.encode()).hexdigest()[:8])
+                log.info("OK  %s -> %s", t, name)
+                processed += 1
+            except Exception as exc:  # принтер недоступен, битое письмо и т.п.
+                n = entry["attempts"][eid] = entry["attempts"].get(eid, 0) + 1
+                log.error("ОШИБКА (%s, попытка %d/%d): %s", t, n, MAX_ATTEMPTS, exc)
+                if n < MAX_ATTEMPTS:
+                    state.set(key, entry)
+                    break  # порядок важен: повторим это письмо на следующем проходе, следующие не трогаем
+                log.error("Письмо пропущено после %d неудачных попыток", MAX_ATTEMPTS)
+            entry["attempts"].pop(eid, None)
+            entry["done"] = (entry["done"] + [eid])[-OUTLOOK_MAX_DONE:]
+            watermark = max(watermark, t)
+            entry["watermark"] = watermark.isoformat()
+            state.set(key, entry)  # сохраняем после каждого письма
+    return processed
 
 
 def main() -> None:
@@ -408,9 +590,14 @@ def main() -> None:
     state = State(cfg.state_file)
     since = datetime.strptime(args.since, "%Y-%m-%d") if args.since else None
 
+    def one_pass():
+        if cfg.backend == "outlook":
+            return run_once_outlook(cfg, state, open_outlook_sent_items(), backfill_all=args.all, since=since)
+        return run_once(cfg, state, backfill_all=args.all, since=since)
+
     while True:
         try:
-            run_once(cfg, state, backfill_all=args.all, since=since)
+            one_pass()
         except KeyboardInterrupt:
             raise
         except Exception as exc:
