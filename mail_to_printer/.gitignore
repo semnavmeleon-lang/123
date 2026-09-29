@@ -1,0 +1,4 @@
+config.ini
+state.json
+pdf_out/
+__pycache__/
