@@ -1,0 +1,51 @@
+[
+  {
+    "id": "m_example_excel_obzvon",
+    "name": "Обзвон по столбцу Excel (Yealink)",
+    "updatedAt": 0,
+    "openInNewTab": false,
+    "inputs": [],
+    "triggers": [],
+    "steps": [
+      {
+        "id": "s1",
+        "type": "loadExcel",
+        "varName": "phones",
+        "fileName": "",
+        "sheet": "",
+        "hasHeader": true,
+        "colIndex": 0,
+        "colLabel": "",
+        "trim": true,
+        "skipEmpty": true,
+        "unique": false,
+        "truncated": false,
+        "values": []
+      },
+      {
+        "id": "s2",
+        "type": "loopList",
+        "sourceKey": "phones",
+        "itemVar": "phone",
+        "steps": [
+          {
+            "id": "s3",
+            "type": "customJs",
+            "code": "return String(vars.phone).replace(/\\D/g, '');",
+            "saveTo": "digits"
+          },
+          {
+            "id": "s4",
+            "type": "navigate",
+            "url": "http://172.26.47.19/servlet?m=action&p=dial&num=<${digits}>"
+          },
+          {
+            "id": "s5",
+            "type": "wait",
+            "ms": 3000
+          }
+        ]
+      }
+    ]
+  }
+]

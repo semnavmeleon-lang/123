@@ -39,6 +39,7 @@ export function substitute(str, vars) {
 // Общие для ЛЮБОГО шага поля политики повтора при ошибке - добавляются поверх
 // специфичных для типа полей, а не как отдельный тип шага.
 const RETRY_DEFAULTS = { retries: 0, retryDelayMs: 800, onError: "stop" };
+export const NO_RETRY_STEP_TYPES = ["exportCsv", "loadExcel"];
 
 export function defaultStep(type) {
   const id = uid();
@@ -97,6 +98,26 @@ export function defaultStep(type) {
     case "exportCsv":
       step = { id, type, sourceVar: "rows", filename: "export.csv" };
       break;
+    case "loadExcel":
+      // values - снимок столбца на момент выбора файла: сам файл макрос при запуске
+      // не читает (у расширения нет доступа к файловой системе), поэтому он работает
+      // и при запуске по расписанию/URL.
+      step = {
+        id,
+        type,
+        varName: "list",
+        fileName: "",
+        sheet: "",
+        hasHeader: true,
+        colIndex: 0,
+        colLabel: "",
+        trim: true,
+        skipEmpty: true,
+        unique: false,
+        truncated: false,
+        values: [],
+      };
+      break;
     case "condition":
       step = {
         id,
@@ -134,9 +155,9 @@ export function defaultStep(type) {
     default:
       step = { id, type };
   }
-  // exportCsv не выполняется на странице и не имеет смысла повторять по таймауту
-  // элемента - retry ему не нужен, оставляем как есть.
-  if (type === "exportCsv") return step;
+  // exportCsv и loadExcel не выполняются на странице и не имеют смысла повторять по
+  // таймауту элемента - retry им не нужен, оставляем как есть.
+  if (NO_RETRY_STEP_TYPES.includes(type)) return step;
   return { ...step, ...RETRY_DEFAULTS };
 }
 
@@ -149,6 +170,7 @@ export const STEP_LABELS = {
   extract: "Извлечь данные",
   extractTable: "Извлечь таблицу",
   exportCsv: "Экспорт в CSV",
+  loadExcel: "Загрузить столбец из Excel/CSV",
   condition: "Условие (элемент найден?)",
   loopCount: "Повторить N раз",
   loopList: "Для каждого значения из списка",
@@ -160,7 +182,7 @@ export const STEP_LABELS = {
 export const STEP_GROUPS = [
   { label: "Навигация", types: ["navigate", "wait", "waitFor", "scroll"] },
   { label: "Взаимодействие", types: ["click", "type", "keypress"] },
-  { label: "Данные", types: ["extract", "extractTable", "exportCsv"] },
+  { label: "Данные", types: ["loadExcel", "extract", "extractTable", "exportCsv"] },
   { label: "Логика", types: ["condition", "loopCount", "loopList"] },
   { label: "Код", types: ["customJs"] },
 ];

@@ -8,7 +8,16 @@ import {
   STEP_GROUPS,
   newTrigger,
   TRIGGER_LABELS,
+  NO_RETRY_STEP_TYPES,
 } from "./common.js";
+import {
+  MAX_VALUES,
+  readWorkbook,
+  sheetToRows,
+  listColumns,
+  findColumnIndex,
+  extractColumn,
+} from "./excel-import.js";
 
 const sidebarList = document.getElementById("sidebarList");
 const nameInput = document.getElementById("macroName");
@@ -348,7 +357,7 @@ function renderStepCard(step, arr, idx) {
   renderStepFields(step, fields);
   card.appendChild(fields);
 
-  if (step.type !== "exportCsv") {
+  if (!NO_RETRY_STEP_TYPES.includes(step.type)) {
     const retryFields = document.createElement("div");
     retryFields.className = "step-fields retry-fields";
     textField(retryFields, "Повторов при ошибке", step.retries, (v) => { step.retries = v; scheduleSave(); });
@@ -644,6 +653,9 @@ function renderStepFields(step, container) {
       );
       textField(container, "Имя файла (можно ${переменные})", step.filename, (v) => { step.filename = v; scheduleSave(); }, "export.csv");
       break;
+    case "loadExcel":
+      renderLoadExcelFields(step, container);
+      break;
     case "condition":
       selectorFieldGroup(container, step);
       selectField(
@@ -665,7 +677,7 @@ function renderStepFields(step, container) {
     case "loopList":
       textField(
         container,
-        "Переменная со списком (входной параметр или ранее извлечённая)",
+        "Переменная со списком (входной параметр, столбец из Excel или ранее извлечённая)",
         step.sourceKey,
         (v) => { step.sourceKey = v; scheduleSave(); },
         "phones"
@@ -710,6 +722,137 @@ function renderStepFields(step, container) {
       if (step.mode === "toElement") selectorFieldGroup(container, step);
       break;
   }
+}
+
+// ---------------- шаг «Загрузить столбец из Excel/CSV» ----------------
+
+// Разобранные книги живут только в памяти страницы конструктора (step.id -> книга) и
+// нужны, чтобы менять лист/столбец без повторного выбора файла. В макросе сохраняется
+// только снимок столбца (step.values).
+const excelCache = new Map();
+
+function excelRows(cache, sheet) {
+  if (!cache.rows.has(sheet)) cache.rows.set(sheet, sheetToRows(globalThis.XLSX, cache.wb, sheet));
+  return cache.rows.get(sheet);
+}
+
+function recomputeExcel(step) {
+  const cache = excelCache.get(step.id);
+  if (!cache) return;
+  const rows = excelRows(cache, step.sheet);
+  const cols = listColumns(rows, step.hasHeader);
+  const col = cols[step.colIndex] || cols[0];
+  step.colIndex = col ? col.index : 0;
+  step.colLabel = col ? col.header : "";
+  const { values, truncated } = extractColumn(rows, step);
+  step.values = values;
+  step.truncated = truncated;
+}
+
+async function loadExcelFile(step, file) {
+  try {
+    const wb = readWorkbook(globalThis.XLSX, await file.arrayBuffer(), file.name);
+    if (!wb.SheetNames.length) throw new Error("в файле нет листов");
+    const cache = { wb, rows: new Map() };
+    excelCache.set(step.id, cache);
+    // Прежние настройки применяем по возможности: лист - по имени, столбец - по заголовку.
+    step.sheet = wb.SheetNames.includes(step.sheet) ? step.sheet : wb.SheetNames[0];
+    step.fileName = file.name;
+    step.colIndex = findColumnIndex(excelRows(cache, step.sheet), step);
+    recomputeExcel(step);
+    rerenderAll();
+    scheduleSave();
+  } catch (e) {
+    alert("Не удалось прочитать файл: " + e.message);
+  }
+}
+
+function excelSummaryText(step) {
+  if (!step.values || !step.values.length) return "Данных пока нет — выберите файл Excel или CSV.";
+  const head = step.values.slice(0, 3).join(" · ");
+  const more = step.values.length > 3 ? " …" : "";
+  const tail = step.truncated ? ` ВНИМАНИЕ: список обрезан до ${MAX_VALUES} значений.` : "";
+  return (
+    `Сохранено значений: ${step.values.length} (файл «${step.fileName}», лист «${step.sheet}», ` +
+    `столбец «${step.colLabel || "без заголовка"}»). Первые: ${head}${more}.${tail}`
+  );
+}
+
+function renderLoadExcelFields(step, container) {
+  const cache = excelCache.get(step.id);
+
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".xlsx,.xlsm,.xls,.csv,.tsv,.txt";
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) loadExcelFile(step, fileInput.files[0]);
+  });
+  field(container, "Файл (.xlsx, .xls, .xlsm, .csv)", fileInput, true);
+
+  const summary = document.createElement("div");
+  summary.className = "field-note" + (step.truncated ? " warn" : "");
+  summary.textContent = excelSummaryText(step);
+  container.appendChild(summary);
+  const refreshSummary = () => {
+    summary.className = "field-note" + (step.truncated ? " warn" : "");
+    summary.textContent = excelSummaryText(step);
+  };
+  const recompute = () => {
+    recomputeExcel(step);
+    refreshSummary();
+    scheduleSave();
+  };
+
+  if (cache) {
+    selectField(
+      container,
+      "Лист",
+      cache.wb.SheetNames.map((n) => [n, n]),
+      step.sheet,
+      (v) => {
+        step.sheet = v;
+        step.colIndex = findColumnIndex(excelRows(cache, v), step);
+        recomputeExcel(step);
+        rerenderAll();
+        scheduleSave();
+      }
+    );
+    const cols = listColumns(excelRows(cache, step.sheet), step.hasHeader);
+    selectField(
+      container,
+      "Столбец",
+      cols.map((c) => [String(c.index), c.label]),
+      String(step.colIndex),
+      (v) => {
+        step.colIndex = Number(v);
+        recompute();
+      }
+    );
+    checkboxField(container, "Первая строка — заголовки (не входит в список)", step.hasHeader, (v) => {
+      step.hasHeader = v;
+      step.colIndex = findColumnIndex(excelRows(cache, step.sheet), { ...step, hasHeader: v });
+      recomputeExcel(step);
+      rerenderAll();
+      scheduleSave();
+    });
+    checkboxField(container, "Обрезать пробелы по краям", step.trim, (v) => { step.trim = v; recompute(); });
+    checkboxField(container, "Пропускать пустые ячейки", step.skipEmpty, (v) => { step.skipEmpty = v; recompute(); });
+    checkboxField(container, "Только уникальные значения", step.unique, (v) => { step.unique = v; recompute(); });
+  } else if (step.values && step.values.length) {
+    const note = document.createElement("div");
+    note.className = "field-note";
+    note.textContent = "Чтобы сменить лист, столбец или обновить данные, выберите файл заново — прежние настройки подставятся сами.";
+    container.appendChild(note);
+  }
+
+  textField(
+    container,
+    "Сохранить список в переменную (дальше — «Для каждого значения из списка»)",
+    step.varName,
+    (v) => { step.varName = v.trim(); scheduleSave(); },
+    "list",
+    true
+  );
 }
 
 addStepBtn.addEventListener("click", () => {

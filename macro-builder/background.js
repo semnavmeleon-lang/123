@@ -244,6 +244,15 @@ async function runStep(ctx, step) {
       if (step.saveTo) ctx.vars[step.saveTo] = value;
       return;
     }
+    case "loadExcel": {
+      const values = Array.isArray(step.values) ? step.values : [];
+      if (!values.length) {
+        throw new Error("В шаге нет данных - откройте макрос в конструкторе и выберите файл Excel/CSV");
+      }
+      ctx.vars[step.varName || "list"] = values.slice();
+      ctx.log({ type: step.type, status: "info", message: `${values.length} знач. → ${step.varName || "list"}` });
+      return;
+    }
     case "exportCsv": {
       const rows = ctx.vars[step.sourceVar];
       if (!Array.isArray(rows)) throw new Error(`Переменная "${step.sourceVar}" не содержит таблицу (массив)`);
