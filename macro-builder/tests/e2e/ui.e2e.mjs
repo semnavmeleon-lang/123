@@ -379,8 +379,34 @@ try {
   await insp.getByRole("button", { name: "Проверить шаг" }).click();
   await b.waitForFunction(() => /Готово|Ошибка/.test(document.querySelector('[data-role="drawer"] .drawer-title')?.textContent || ""), null, { timeout: 20000 });
   assert.equal(await page.inputValue("#q"), "Тишин Юрий Романович", "«Проверить шаг» вне цикла тоже берёт первую запись");
+  // «В цикл выше / ниже»: шаг рядом с циклом переносится в его конец / начало
+  const topTypes = async () => { await b.waitForTimeout(650); return (await macros(b))[0].steps.map((x) => x.type); };
+  assert.equal(await insp.getByRole("button", { name: "В цикл выше" }).count(), 0, "рядом с циклом шага нет - кнопки нет");
+  const before = await topTypes(); // loadExcel, loopList, click, clearField, type
+  assert.deepEqual(before, ["loadExcel", "loopList", "click", "clearField", "type"]);
+  await insp.getByRole("button", { name: "Вверх" }).click();
+  await insp.getByRole("button", { name: "Вверх" }).click(); // теперь шаг прямо после цикла
+  await insp.getByRole("button", { name: "В цикл выше" }).click();
+  assert.deepEqual(await topTypes(), ["loadExcel", "loopList", "click", "clearField"]);
+  let mainLoop = (await macros(b))[0].steps[1];
+  assert.equal(mainLoop.steps[mainLoop.steps.length - 1].type, "type", "шаг стал последним внутри цикла");
+  assert.equal(await row("type").last().locator(".tr-warn").innerText(), "", "внутри цикла предупреждения нет");
+  await insp.getByRole("button", { name: "Вынести" }).click();
+  assert.deepEqual(await topTypes(), ["loadExcel", "loopList", "type", "click", "clearField"]);
+  await insp.getByRole("button", { name: "Вверх" }).click(); // шаг прямо перед циклом
+  await insp.getByRole("button", { name: "В цикл ниже" }).click();
+  assert.deepEqual(await topTypes(), ["loadExcel", "loopList", "click", "clearField"]);
+  mainLoop = (await macros(b))[0].steps[1];
+  assert.equal(mainLoop.steps[0].type, "type", "шаг стал первым внутри цикла");
+  await insp.getByRole("button", { name: "Вынести" }).click();
+  await insp.getByRole("button", { name: "Вниз" }).click();
+  await insp.getByRole("button", { name: "Вниз" }).click(); // на прежнее место: последним
+  assert.deepEqual(await topTypes(), before);
+  // подпись кнопки добавления показывает, куда попадёт шаг
+  assert.match(await b.locator('[data-branch="each"] > [data-role="add-step"]').first().innerText(), /Добавить шаг в цикл/);
+  assert.equal(await b.locator('[data-role="steps"] > [data-role="add-step"]').innerText(), "Добавить шаг");
   // «В цикл»: шаг переезжает в новый цикл по таблице, предупреждение исчезает
-  await insp.getByRole("button", { name: "В цикл" }).click();
+  await insp.locator('[data-role="fix-wrap"]').click(); // в плашке предупреждения: «Повторять для каждой строки, начиная с этого шага»
   await b.waitForFunction(() => document.querySelectorAll('[data-role="step-row"][data-step-type="loopList"]').length === 2);
   await b.waitForTimeout(600);
   const loops = (await macros(b))[0].steps.filter((x) => x.type === "loopList");

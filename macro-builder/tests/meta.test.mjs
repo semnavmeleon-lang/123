@@ -137,7 +137,7 @@ test("collectVars: все переменные и отдельно списки 
   assert.deepEqual([...v.lists].sort(), ["all_names", "phones", "rows"]);
 });
 
-import { collectValueSources, scopeIssues, buildSampleVars, describeSampleVars } from "../ui/meta.js";
+import { collectValueSources, scopeIssues, buildSampleVars, describeSampleVars, wrapRangeInLoop } from "../ui/meta.js";
 
 test("collectValueSources: столбцы таблицы с заголовками идут первыми, дальше цикл, переменные, служебные", () => {
   const macro = {
@@ -249,4 +249,44 @@ test("buildSampleVars: первая запись таблицы, значени�
   assert.equal(buildSampleVars({ steps: [st("loadExcel", { mode: "column", varName: "l", values: ["x"] })] }).item, "x");
   assert.match(describeSampleVars(macro), /fio = «Иванов И\. И\.»; polis = «111»; phones \(первое значение\) = «79054194015»/);
   assert.equal(describeSampleVars({ steps: [] }), "");
+});
+
+test("wrapRangeInLoop: этот шаг и всё ниже уходит в один цикл, цикл по тому же списку раскрывается, а не вкладывается", () => {
+  const rep = st("appendReport", { template: "ошибка ${_error}" });
+  const inner = st("loopList", { sourceKey: "rows", itemVar: "row", onRowError: "continue", resume: true, limit: 5, catchSteps: [rep], steps: [st("type", { selector: "#q", value: "${fio}" })] });
+  const a = st("navigate", { url: "https://a.ru" });
+  const c6 = st("clearField", { selector: "#d" });
+  const w7 = st("waitFor", { selector: "#q" });
+  const c9 = st("click", { selector: "#submit" });
+  const arr = [a, c6, w7, inner, c9];
+  const loop = st("loopList", { sourceKey: "other" });
+  wrapRangeInLoop(arr, 1, loop);
+  assert.deepEqual(arr, [a, loop], "перед выбранным шагом всё осталось как было");
+  assert.deepEqual(loop.steps.map((s) => s.type), ["clearField", "waitFor", "type", "click"], "шаги внутреннего цикла встали на место");
+  assert.equal(loop.sourceKey, "rows", "источник взят у раскрытого цикла");
+  assert.equal(loop.onRowError, "continue");
+  assert.equal(loop.itemVar, "row");
+  assert.equal(loop.limit, 5);
+  assert.deepEqual(loop.catchSteps, [rep]);
+  // два цикла по разным спискам: раскрывается первый, второй остаётся вложенным обычным шагом
+  const first = st("loopList", { sourceKey: "rows", steps: [st("type", { selector: "#q", value: "${fio}" })] });
+  const other = st("loopList", { sourceKey: "phones", steps: [st("wait")] });
+  const arr2 = [st("click", { selector: "#a" }), first, other];
+  const loop2 = st("loopList", { sourceKey: "x" });
+  wrapRangeInLoop(arr2, 0, loop2);
+  assert.deepEqual(loop2.steps.map((s) => s.type), ["click", "type", "loopList"]);
+  assert.equal(loop2.sourceKey, "rows", "источник берётся у первого цикла в диапазоне");
+  assert.equal(loop2.steps[2], other);
+  // без циклов в диапазоне источник остаётся заданным
+  const arr3 = [st("click", { selector: "#a" })];
+  const loop3 = st("loopList", { sourceKey: "rows" });
+  wrapRangeInLoop(arr3, 0, loop3);
+  assert.equal(loop3.sourceKey, "rows");
+  assert.deepEqual(arr3, [loop3]);
+});
+
+test("scopeIssues: у предупреждения про столбец таблицы есть исправление «wrap»", () => {
+  const macro = { steps: [tableStep(), typeFio()] };
+  assert.equal(scopeIssues(macro)[0].fix, "wrap");
+  assert.equal(scopeIssues({ steps: [st("type", { selector: "#q", value: "${nothing}" })] })[0].fix, "");
 });

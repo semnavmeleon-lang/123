@@ -4,7 +4,7 @@
 import { loadMacros, saveMacros, newMacro, uid, defaultStep, newTrigger, TRIGGER_LABELS, REPORTS_KEY, PROGRESS_KEY, progressKey, loadProgressAll, resetProgress, substitute } from "./common.js";
 import { buildConfig, parseImport, mergeConfig, importAsCopies, progressSummary } from "./logic.js";
 import { h, clear, textInput, checkbox, segmented, button, iconButton, popover, menuList, modal, confirmDialog, toast, downloadText } from "./ui/dom.js";
-import { STEP_META, PALETTE, CATEGORIES, stepTitle, describeStep, validateStep, validateMacro, collectVars, collectValueSources, buildSampleVars, describeSampleVars, scopeIssues, resumeLoops, resumableProgress, describeProgress, pluralRu, walkSteps } from "./ui/meta.js";
+import { STEP_META, PALETTE, CATEGORIES, stepTitle, describeStep, validateStep, validateMacro, collectVars, collectValueSources, buildSampleVars, describeSampleVars, scopeIssues, resumeLoops, resumableProgress, describeProgress, wrapRangeInLoop, pluralRu, walkSteps } from "./ui/meta.js";
 import { stepBody, hasBody, branchesOf } from "./ui/editors.js";
 
 const sideEl = document.getElementById("side");
@@ -88,12 +88,26 @@ function defaultLoopSource() {
 function wrapInLoop({ arr, idx }) {
   const loop = defaultStep("loopList");
   loop.sourceKey = defaultLoopSource();
-  loop.steps = arr.splice(idx);
-  arr.push(loop);
+  wrapRangeInLoop(arr, idx, loop);
   touch();
   renderTree();
   renderInspector();
   toast(`В цикл помещено шагов: ${loop.steps.length}`, "ok");
+}
+
+const isLoop = (x) => !!x && (x.type === "loopList" || x.type === "loopCount");
+
+// Шаг, стоящий сразу после цикла, уходит в его конец (dir = -1); стоящий сразу перед циклом - в его начало (dir = 1)
+function moveIntoLoop({ arr, idx, step }, dir) {
+  const loop = arr[idx + dir];
+  if (!isLoop(loop)) return;
+  arr.splice(idx, 1);
+  loop.steps = loop.steps || [];
+  if (dir < 0) loop.steps.push(step);
+  else loop.steps.unshift(step);
+  touch();
+  renderTree();
+  renderInspector();
 }
 
 // Вынести шаг из цикла или условия: он встанет сразу после него
@@ -362,7 +376,10 @@ function settingsRow() {
   return row;
 }
 
-function renderList(arr, container, top = false) {
+// Подпись кнопки добавления: внутри цикла и веток условия видно, куда попадёт новый шаг
+const ADD_LABELS = { each: "Добавить шаг в цикл", then: "Добавить шаг в «Тогда»", else: "Добавить шаг в «Иначе»", catch: "Добавить шаг в «При ошибке»" };
+
+function renderList(arr, container, top = false, kind = "") {
   if (!arr.length && top) {
     container.append(
       h(
@@ -387,13 +404,13 @@ function renderList(arr, container, top = false) {
       for (const b of branches) {
         wrap.append(h("div", { class: "tree-branch-label", "data-kind": b.kind }, b.label));
         const inner = h("div", { "data-branch": b.kind });
-        renderList(b.arr, inner);
+        renderList(b.arr, inner, false, b.kind);
         wrap.append(inner);
       }
       container.append(wrap);
     }
   });
-  const add = h("button", { type: "button", class: "tree-add", "data-role": "add-step" }, "Добавить шаг");
+  const add = h("button", { type: "button", class: "tree-add", "data-role": "add-step" }, ADD_LABELS[kind] || "Добавить шаг");
   add.addEventListener("click", () => openPalette(add, arr));
   container.append(add);
 }
@@ -416,19 +433,30 @@ function stepRow(step, idx) {
 function refreshRows() {
   // переменные, которых на этом месте ещё нет (например, столбец таблицы вне цикла)
   const scope = new Map();
-  for (const i of scopeIssues(current)) scope.set(i.stepId, [...(scope.get(i.stepId) || []), i.message]);
+  for (const i of scopeIssues(current)) scope.set(i.stepId, [...(scope.get(i.stepId) || []), i]);
   for (const { detail, warn, step } of rows.values()) {
     detail.textContent = describeStep(step);
     const issues = validateStep(step);
-    const missing = scope.get(step.id) || [];
+    const missing = (scope.get(step.id) || []).map((i) => i.message);
     warn.textContent = issues.length ? "Не заполнено" : missing.length ? "Нет данных" : "";
     warn.title = [...issues, ...missing].join("\n");
   }
   const note = ui.inspector && ui.inspector.querySelector('[data-role="scope-warn"]');
   if (note && selectedId && selectedId !== "macro") {
-    const msgs = scope.get(selectedId) || [];
-    note.textContent = msgs.join("\n");
-    note.hidden = !msgs.length;
+    const found = scope.get(selectedId) || [];
+    note.hidden = !found.length;
+    const key = found.map((i) => i.message).join("\n");
+    if (note.dataset.shown !== key) {
+      // одна кнопка исправляет всё: этот шаг и шаги ниже уходят в цикл по таблице
+      note.dataset.shown = key;
+      clear(note);
+      note.append(h("div", {}, key));
+      if (found.some((i) => i.fix === "wrap")) {
+        const fix = button("Повторять для каждой строки, начиная с этого шага", { kind: "small primary", onClick: () => { const l = locate(selectedId); if (l) wrapInLoop(l); } });
+        fix.dataset.role = "fix-wrap";
+        note.append(fix);
+      }
+    }
   }
   const settings = ui.tree && ui.tree.querySelector(".settings-row .tr-detail");
   if (settings) {
@@ -561,6 +589,8 @@ function renderInspector() {
     button("Вверх", { kind: "small", disabled: idx === 0, onClick: () => move(-1) }),
     button("Вниз", { kind: "small", disabled: idx === arr.length - 1, onClick: () => move(1) }),
     button("В цикл", { kind: "small", tip: "Поместить этот шаг и все шаги ниже в цикл «Для каждой записи» (нужно, чтобы использовать столбцы таблицы)", onClick: () => wrapInLoop(loc) }),
+    isLoop(arr[idx - 1]) ? button("В цикл выше", { kind: "small", tip: "Перенести шаг в конец цикла, который стоит прямо над ним", onClick: () => moveIntoLoop(loc, -1) }) : null,
+    isLoop(arr[idx + 1]) ? button("В цикл ниже", { kind: "small", tip: "Перенести шаг в начало цикла, который стоит прямо под ним", onClick: () => moveIntoLoop(loc, 1) }) : null,
     parent ? button("Вынести", { kind: "small", tip: "Вынести шаг из цикла или условия: он встанет сразу после него", onClick: () => moveOut(loc) }) : null,
     button("Копировать", { kind: "small", onClick: () => { const c = cloneStep(step); arr.splice(idx + 1, 0, c); selectedId = c.id; touch(); renderTree(); renderInspector(); } }),
     button("Удалить", { kind: "small danger", onClick: () => { arr.splice(idx, 1); selectedId = arr[Math.min(idx, arr.length - 1)] ? arr[Math.min(idx, arr.length - 1)].id : "macro"; touch(); renderTree(); renderInspector(); } })

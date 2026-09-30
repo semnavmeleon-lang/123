@@ -305,7 +305,7 @@ export function scopeIssues(macro) {
         const message = columnOwner.has(n)
           ? `Значение \${${n}} - столбец таблицы, он доступен только внутри шага «Для каждой записи»: нажмите «В цикл» вверху панели, и этот шаг вместе с шагами ниже окажется в цикле`
           : `Переменная \${${n}} здесь ещё не задана: она должна получить значение в шаге выше`;
-        out.push({ stepId: st.id, path, message });
+        out.push({ stepId: st.id, path, message, fix: columnOwner.has(n) ? "wrap" : "" });
       }
       if (st.type === "loopList" && st.sourceKey && !defined.has(st.sourceKey)) {
         out.push({ stepId: st.id, path, message: `Список «${st.sourceKey}» не найден до этого шага: шаг «Данные из Excel/CSV» с таким именем должен стоять выше цикла` });
@@ -509,4 +509,28 @@ export function describeProgress(sum) {
   const when = fmtWhen(sum.at);
   if (when) parts.push(`сохранено ${when}`);
   return { kind: sum.foreign ? "warn" : "ok", text: parts.join(" · ") };
+}
+
+// Помещает шаги arr[idx..] (этот и все ниже) в один цикл `loop`. Цикл по тому же списку внутри диапазона не вкладывается
+// в новый, а раскрывается: его шаги встают на место, а настройки (ошибки, лимит, прогресс) переходят новому циклу.
+export function wrapRangeInLoop(arr, idx, loop) {
+  const range = arr.splice(idx);
+  const inner = range.find((s) => s.type === "loopList" && s.sourceKey);
+  if (inner) loop.sourceKey = inner.sourceKey;
+  const steps = [];
+  let adopted = false;
+  for (const st of range) {
+    if (st.type === "loopList" && st.sourceKey === loop.sourceKey) {
+      if (!adopted) {
+        for (const k of ["itemVar", "limit", "resume", "onRowError", "catchSteps"]) if (st[k] !== undefined) loop[k] = st[k];
+        adopted = true;
+      }
+      steps.push(...(st.steps || []));
+    } else {
+      steps.push(st);
+    }
+  }
+  loop.steps = steps;
+  arr.push(loop);
+  return loop;
 }
