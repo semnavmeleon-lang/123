@@ -219,7 +219,7 @@ export async function evaluateCondition(step, vars, deps) {
       if (final || deps.now() >= deadline || (deps.cancelled && deps.cancelled())) break;
       await deps.sleep(300);
     }
-    log.push(`${final ? "✔" : "✘"} ${t.negate ? "НЕ: " : ""}${TEST_KINDS[t.kind] || t.kind}: ${info}`);
+    log.push(`${final ? "Выполнено" : "Не выполнено"}: ${t.negate ? "НЕ " : ""}${TEST_KINDS[t.kind] || t.kind} - ${info}`);
     if (isAny && final) {
       result = true;
       break;

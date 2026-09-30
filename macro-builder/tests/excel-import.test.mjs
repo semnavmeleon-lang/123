@@ -219,7 +219,7 @@ test("valueLength: символы, только цифры, без пробел�
   assert.equal(valueLength("25470CFI4440002174"), 18);
   assert.equal(valueLength("+7 (905) 419-40-15", "digits"), 11);
   assert.equal(valueLength(" a b ", "nospace"), 2);
-  assert.equal(valueLength("😀a"), 2);
+  assert.equal(valueLength("\u{1F600}a"), 2); // символ вне BMP считается одним
   assert.equal(valueLength(null), 0);
 });
 

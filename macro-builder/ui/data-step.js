@@ -215,7 +215,7 @@ function resultLine(step) {
       line.textContent = step.skipped ? `Ничего не осталось: пропущено ${step.skipped}` : "Данных пока нет";
     } else {
       line.className = "result-line" + (step.truncated ? " warn" : "");
-      line.textContent = `✔ ${n} ${noun} готово${extra.length ? " · " + extra.join(" · ") : ""}`;
+      line.textContent = `Готово: ${n} ${noun}${extra.length ? " · " + extra.join(" · ") : ""}`;
     }
   };
   update();
@@ -244,18 +244,16 @@ function rulesEditor(step, api, result, onChange) {
     row.append(textInput({ type: "number", min: 0, value: rule.n ?? "", placeholder: "N", onInput: (v) => { rule.n = v; changed(); }, tip: "Число символов" }));
     row.append(selectInput(Object.entries(LENGTH_COUNT), rule.count || "chars", (v) => { rule.count = v; changed(); api.rerender(); }, { tip: "Как считать длину" }));
     row.append(
-      iconButton("✕", "Удалить правило", () => {
+      iconButton("×", "Удалить правило", () => {
         step.lengthRules.splice(i, 1);
         changed();
         api.rerender();
-      }, { danger: true })
+      })
     );
     wrap.append(row);
   });
   wrap.append(
     button("Добавить правило", {
-      kind: "ghost",
-      icon: "＋",
       onClick: () => {
         const first = (step.columns || [])[0];
         step.lengthRules.push({ col: rowsMode && first ? first.varName : "", op: "neq", n: "", count: "chars" });
@@ -281,7 +279,7 @@ export function dataStepBody(step, api) {
     "div",
     { class: "file-drop" },
     fileInput,
-    button(step.fileName ? "Выбрать другой файл" : "Выбрать файл Excel или CSV", { kind: step.fileName ? "default" : "primary", icon: "📂", onClick: () => fileInput.click() }),
+    button(step.fileName ? "Выбрать другой файл" : "Выбрать файл Excel или CSV", { kind: step.fileName ? "default" : "primary", onClick: () => fileInput.click() }),
     step.fileName ? h("div", { style: { minWidth: 0 } }, h("div", { class: "file-name" }, step.fileName)) : null
   );
   if (c) {

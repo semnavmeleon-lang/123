@@ -132,3 +132,36 @@ test("collectVars: все переменные и отдельно списки 
   for (const n of ["fio", "polis", "rows", "item", "holder", "verdict", "digits", "phones", "name", "_row", "_error", "all_names"]) assert.ok(v.all.includes(n), n);
   assert.deepEqual([...v.lists].sort(), ["all_names", "phones", "rows"]);
 });
+
+import { collectValueSources } from "../ui/meta.js";
+
+test("collectValueSources: столбцы таблицы с заголовками идут первыми, дальше цикл, переменные, служебные", () => {
+  const macro = {
+    inputs: [{ key: "phones", multiline: true }],
+    steps: [
+      st("loadExcel", { mode: "rows", varName: "rows", columns: [{ varName: "fio", header: "ФИО" }, { varName: "polis", header: "Номер полиса" }] }),
+      st("loopList", { sourceKey: "rows", itemVar: "item", steps: [st("extract", { varName: "holder" }), st("setVar", { varName: "verdict" })] }),
+    ],
+  };
+  const groups = collectValueSources(macro);
+  assert.deepEqual(groups.map((g) => g.label), ["Столбцы таблицы", "Цикл", "Другие переменные", "Служебные"]);
+  assert.deepEqual(groups[0].items, [
+    { value: "${fio}", label: "ФИО  (fio)" },
+    { value: "${polis}", label: "Номер полиса  (polis)" },
+  ]);
+  assert.deepEqual(groups[1].items.map((i) => i.value), ["${item}"]);
+  assert.deepEqual(groups[2].items.map((i) => i.value), ["${phones}", "${holder}", "${verdict}"]);
+  assert.ok(groups[3].items.some((i) => i.value === "${_row}"));
+  // повторов нет, у каждого значения формат ${имя}
+  const all = groups.flatMap((g) => g.items.map((i) => i.value));
+  assert.equal(new Set(all).size, all.length);
+  assert.ok(all.every((v) => /^\$\{[A-Za-z_]\w*\}$/.test(v)));
+});
+
+test("collectValueSources: без таблицы нет группы «Столбцы таблицы»; столбцы без заголовка подписаны именем переменной", () => {
+  assert.deepEqual(collectValueSources({ steps: [] }).map((g) => g.label), ["Служебные"]);
+  const g = collectValueSources({ steps: [st("loadExcel", { mode: "rows", columns: [{ varName: "col1", header: "" }] })] });
+  assert.equal(g[0].items[0].label, "col1");
+  // режим «один столбец» столбцов-переменных не даёт
+  assert.equal(collectValueSources({ steps: [st("loadExcel", { mode: "column" })] })[0].label, "Служебные");
+});

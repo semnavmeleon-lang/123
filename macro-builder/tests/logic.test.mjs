@@ -105,7 +105,7 @@ test("evaluateCondition: текст результата поиска содер
   assert.equal(ok.result, true);
   const bad = await evaluateCondition(step, { fio: "Шапарь Елена Ивановна" }, deps(page));
   assert.equal(bad.result, false);
-  assert.match(bad.log[0], /✘/);
+  assert.match(bad.log[0], /^Не выполнено/);
   assert.match(bad.log[0], /Тишин Юрий Романович/, "в журнале видно, что реально нашли на странице");
 });
 

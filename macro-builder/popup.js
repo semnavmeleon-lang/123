@@ -1,14 +1,14 @@
-// Всплывающее окно расширения: список макросов с кнопкой запуска, статус и прогресс выполнения.
+// Всплывающее окно расширения: список макросов с запуском, статусом и прогрессом выполнения.
 
 import { loadMacros, uid } from "./common.js";
-import { h, clear, button, iconButton } from "./ui/dom.js";
+import { h, clear, button } from "./ui/dom.js";
 import { pluralRu } from "./ui/meta.js";
 
 const root = document.getElementById("root");
 
 let macros = [];
 let run = null; // { runId, macroId, progress?: {index,total,label} }
-const status = {}; // macroId -> { state: "ok" | "err", text }
+const status = {}; // macroId -> { state: "ok" | "err" | "run", text }
 
 function openBuilder(params) {
   chrome.tabs.create({ url: chrome.runtime.getURL("builder.html") + (params || "") });
@@ -22,11 +22,9 @@ async function refresh() {
 
 function render() {
   clear(root);
-  root.append(
-    h("div", { class: "pop-head" }, h("div", { class: "brand" }, h("span", { class: "brand-logo" }, "⚡"), "Макросы"), button("Конструктор", { onClick: () => openBuilder("") }))
-  );
+  root.append(h("div", { class: "pop-head" }, h("div", { class: "grow" }, "Макросы"), button("Конструктор", { kind: "small", onClick: () => openBuilder("") })));
   if (!macros.length) {
-    root.append(h("div", { class: "pop-empty" }, h("div", {}, "Макросов пока нет"), button("Создать первый", { kind: "primary", icon: "＋", onClick: () => openBuilder("?new=1") })));
+    root.append(h("div", { class: "pop-empty" }, h("div", {}, "Макросов пока нет."), button("Создать первый", { kind: "primary", onClick: () => openBuilder("?new=1") })));
     return;
   }
   const list = h("div", { class: "pop-list", "data-role": "pop-list" });
@@ -35,23 +33,20 @@ function render() {
     const n = (m.steps || []).length;
     const st = status[m.id];
     const sub = running
-      ? h("div", { class: "pop-status run" }, run.progress ? `Запись ${run.progress.index} из ${run.progress.total}` : "Выполняется…")
+      ? h("div", { class: "pop-status run" }, run.progress ? `Запись ${run.progress.index} из ${run.progress.total}` : "Выполняется")
       : st
         ? h("div", { class: "pop-status " + st.state }, st.text)
         : h("span", { class: "macro-sub" }, `${n} ${pluralRu(n, "шаг", "шага", "шагов")}`);
-    const runBtn = h("button", { type: "button", class: "pop-run" + (running ? " stop" : ""), title: running ? "Остановить" : "Запустить", "aria-label": running ? "Остановить" : "Запустить", "data-run": m.id }, running ? "■" : "▶");
-    runBtn.addEventListener("click", () => (running ? stop() : onRun(m)));
+    const runBtn = button(running ? "Стоп" : "Запустить", { kind: running ? "danger small" : "primary small", onClick: () => (running ? stop() : onRun(m)) });
+    runBtn.dataset.run = m.id;
     const item = h(
       "div",
       { class: "pop-item" + (running ? " running" : "") },
-      runBtn,
       h("div", { class: "macro-txt" }, h("span", { class: "macro-name", title: m.name }, m.name || "Без имени"), sub),
-      iconButton("✎", "Открыть в конструкторе", () => openBuilder("?m=" + m.id))
+      runBtn,
+      button("Изменить", { kind: "small", onClick: () => openBuilder("?m=" + m.id) })
     );
-    if (running && run.progress) {
-      item.append(h("div", { class: "progress", style: "position:absolute;left:0;right:0;bottom:0;height:3px;border:0;border-radius:0 0 10px 10px;max-width:none" }, h("i", { style: `width:${Math.round(((run.progress.index - 1) / run.progress.total) * 100)}%` })));
-      item.style.position = "relative";
-    }
+    if (running && run.progress) item.append(h("div", { class: "progress" }, h("i", { style: `width:${Math.round(((run.progress.index - 1) / run.progress.total) * 100)}%` })));
     list.append(item);
   }
   root.append(list);
@@ -59,8 +54,7 @@ function render() {
 
 function onRun(macro) {
   if (run) return;
-  const needsForm = (macro.inputs || []).length > 0;
-  if (needsForm) showForm(macro);
+  if ((macro.inputs || []).length) showForm(macro);
   else start(macro, {});
 }
 
@@ -76,7 +70,7 @@ function showForm(macro) {
     ctl.addEventListener("input", () => { values[inp.key] = ctl.value; });
     form.append(h("label", { class: "field" }, h("span", { class: "field-label" }, inp.label || inp.key), ctl));
   }
-  form.append(h("div", { class: "row" }, button("Отмена", { onClick: render }), h("div", { class: "spacer" }), button("Запустить", { kind: "primary", icon: "▶", onClick: () => start(macro, values) })));
+  form.append(h("div", { class: "row" }, button("Отмена", { onClick: render }), h("div", { class: "spacer" }), button("Запустить", { kind: "primary", onClick: () => start(macro, values) })));
   root.append(form);
 }
 
@@ -97,12 +91,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     run.progress = { index: msg.index, total: msg.total, label: msg.label };
     render();
   } else if (msg.type === "mb-run-done") {
-    status[run.macroId] = { state: "ok", text: "✔ Готово" };
+    status[run.macroId] = { state: "ok", text: "Готово" };
     run = null;
     render();
   } else if (msg.type === "mb-run-error") {
     const stopped = /Остановлено/.test(msg.message || "");
-    status[run.macroId] = { state: stopped ? "run" : "err", text: stopped ? "Остановлено" : "✖ " + msg.message };
+    status[run.macroId] = { state: stopped ? "run" : "err", text: stopped ? "Остановлено" : "Ошибка: " + msg.message };
     run = null;
     render();
   }

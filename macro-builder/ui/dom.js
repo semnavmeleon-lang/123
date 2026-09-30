@@ -30,7 +30,8 @@ export function clear(el) {
 
 // Подпись над полем. tip - подсказка при наведении (не выводится текстом на странице).
 export function field(label, control, { tip, wide, grow } = {}) {
-  return h("label", { class: "field" + (wide ? " wide" : "") + (grow ? " grow" : ""), title: tip }, label ? h("span", { class: "field-label" }, label) : null, control);
+  // подпись есть всегда (пустая - для выравнивания элементов без подписи в форме «подпись слева, поле справа»)
+  return h("label", { class: "field" + (wide ? " wide" : "") + (grow ? " grow" : ""), title: tip }, h("span", { class: "field-label" }, label || ""), control);
 }
 
 export function textInput({ value = "", placeholder = "", onInput, mono, type = "text", tip, list, min, step } = {}) {
@@ -79,14 +80,15 @@ export function segmented(options, value, onChange) {
   return wrap;
 }
 
-export function button(label, { kind = "default", onClick, tip, icon, type = "button", disabled } = {}) {
-  const b = h("button", { type, class: "btn btn-" + kind, title: tip, disabled }, icon ? h("span", { class: "btn-icon", "aria-hidden": "true" }, icon) : null, label ? h("span", {}, label) : null);
+export function button(label, { kind = "default", onClick, tip, type = "button", disabled } = {}) {
+  const b = h("button", { type, class: "btn " + kind.split(" ").map((k) => "btn-" + k).join(" "), title: tip, disabled }, label);
   if (onClick) b.addEventListener("click", onClick);
   return b;
 }
 
-export function iconButton(icon, tip, onClick, { danger } = {}) {
-  const b = h("button", { type: "button", class: "icon-btn" + (danger ? " danger" : ""), title: tip, "aria-label": tip }, icon);
+// Маленькая кнопка с одним знаком (например, «×» для удаления строки)
+export function iconButton(text, tip, onClick) {
+  const b = h("button", { type: "button", class: "icon-btn", title: tip, "aria-label": tip }, text);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     onClick(e);
@@ -186,7 +188,7 @@ export function modal({ title, body, actions = [], wide = false, onClose } = {})
   };
   document.addEventListener("keydown", onKey, true);
   box.append(
-    h("div", { class: "modal-head" }, h("h2", {}, title), iconButton("✕", "Закрыть", close)),
+    h("div", { class: "modal-head" }, h("h2", {}, title), iconButton("×", "Закрыть", close)),
     h("div", { class: "modal-body" }, body),
     actions.length ? h("div", { class: "modal-foot" }, actions) : null
   );
@@ -212,7 +214,7 @@ export function confirmDialog(message, { okText = "ОК", danger = false, title 
     const m = modal({
       title,
       body: h("p", { class: "plain" }, message),
-      actions: [button("Отмена", { onClick: () => finish(false) }), button(okText, { kind: danger ? "danger" : "primary", onClick: () => finish(true) })],
+      actions: [button("Отмена", { onClick: () => finish(false) }), button(okText, { kind: danger ? "solid-danger" : "primary", onClick: () => finish(true) })],
       onClose: () => finish(false),
     });
   });

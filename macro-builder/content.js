@@ -277,6 +277,23 @@
         .catch(() => sendResponse({ exists: false }));
       return true;
     }
+    if (msg.action === "highlight") {
+      const list = queryAll(msg.step);
+      if (list.length) {
+        list[0].scrollIntoView({ block: "center", inline: "nearest" });
+        showHighlights(list, 7000);
+      } else {
+        clearHighlights();
+      }
+      showBanner(list.length ? `Найдено элементов: ${list.length}. Esc - убрать подсветку` : "Элемент не найден");
+      sendResponse({ ok: true, count: list.length });
+      return true;
+    }
+    if (msg.action === "clearHighlight") {
+      clearHighlights();
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg.action === "startPicker") {
       startPicker();
       sendResponse({ ok: true });
@@ -300,28 +317,122 @@
     return false;
   });
 
+  // ---------------- подсветка элементов ----------------
+  // Красная рамка с сильным свечением и подписью с названием элемента: tag#id.class "текст".
+  // Одна подсветка используется и в режиме выбора мышью, и в «Показать на странице».
+  const HL_RED = "#ff1a1a";
+  const HL_BOX_CSS =
+    "position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;" +
+    `border:3px solid ${HL_RED};background:rgba(255,26,26,0.16);` +
+    "box-shadow:0 0 0 2px #fff,0 0 18px 5px rgba(255,26,26,0.8);";
+  const HL_LABEL_CSS =
+    `position:absolute;left:-3px;bottom:100%;margin-bottom:5px;background:${HL_RED};color:#fff;` +
+    "font:bold 12px/1.35 ui-monospace,Menlo,Consolas,monospace;padding:2px 7px;white-space:nowrap;" +
+    "max-width:70vw;overflow:hidden;text-overflow:ellipsis;box-shadow:0 0 0 2px #fff;";
+
+  // Название элемента: тег, id, до двух классов, имя поля и короткий текст
+  function describeElement(el) {
+    let s = el.tagName.toLowerCase();
+    if (el.id) s += "#" + el.id;
+    const cls = Array.from(el.classList || []).slice(0, 2);
+    if (cls.length) s += "." + cls.join(".");
+    const name = el.getAttribute && el.getAttribute("name");
+    if (name) s += `[name=${name}]`;
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (text) s += ` "${text.length > 32 ? text.slice(0, 31) + "…" : text}"`;
+    return s.length > 90 ? s.slice(0, 89) + "…" : s;
+  }
+
+  function makeHighlightBox(labelText) {
+    const box = document.createElement("div");
+    box.className = "__mb-hl";
+    box.style.cssText = HL_BOX_CSS;
+    const label = document.createElement("div");
+    label.className = "__mb-hl-label";
+    label.style.cssText = HL_LABEL_CSS;
+    label.textContent = labelText;
+    box.appendChild(label);
+    return box;
+  }
+
+  function placeHighlightBox(box, el) {
+    const r = el.getBoundingClientRect();
+    box.style.left = r.left + "px";
+    box.style.top = r.top + "px";
+    box.style.width = Math.max(r.width, 4) + "px";
+    box.style.height = Math.max(r.height, 4) + "px";
+    const label = box.firstChild;
+    // у верхнего края экрана подпись переносится под рамку
+    const nearTop = r.top < 26;
+    label.style.bottom = nearTop ? "auto" : "100%";
+    label.style.top = nearTop ? "100%" : "auto";
+    label.style.marginBottom = nearTop ? "0" : "5px";
+    label.style.marginTop = nearTop ? "5px" : "0";
+  }
+
+  const hl = { items: [], timer: 0, raf: 0, banner: null, bannerTimer: 0 };
+
+  function repositionHighlights() {
+    cancelAnimationFrame(hl.raf);
+    hl.raf = requestAnimationFrame(() => hl.items.forEach(({ box, el }) => placeHighlightBox(box, el)));
+  }
+
+  // Красная плашка в углу страницы: сколько элементов нашлось
+  function showBanner(text) {
+    if (hl.banner) hl.banner.remove();
+    const b = document.createElement("div");
+    b.className = "__mb-hl-banner";
+    b.style.cssText = `position:fixed;top:10px;right:10px;z-index:2147483647;background:${HL_RED};color:#fff;font:bold 14px/1.3 system-ui,Arial,sans-serif;padding:8px 14px;box-shadow:0 0 0 2px #fff,0 0 14px 3px rgba(255,26,26,0.6);pointer-events:none;`;
+    b.textContent = text;
+    document.documentElement.appendChild(b);
+    hl.banner = b;
+    clearTimeout(hl.bannerTimer);
+    hl.bannerTimer = setTimeout(() => b.remove(), 7000);
+  }
+
+  function clearHighlights() {
+    if (hl.banner) hl.banner.remove();
+    hl.banner = null;
+    hl.items.forEach(({ box }) => box.remove());
+    hl.items = [];
+    clearTimeout(hl.timer);
+    window.removeEventListener("scroll", repositionHighlights, true);
+    window.removeEventListener("resize", repositionHighlights);
+  }
+
+  // Подсвечивает элементы (номер + название), снимается через ttl мс или по Escape
+  function showHighlights(elements, ttl) {
+    clearHighlights();
+    elements.slice(0, 40).forEach((el, i) => {
+      const box = makeHighlightBox(elements.length > 1 ? `${i + 1}. ${describeElement(el)}` : describeElement(el));
+      document.documentElement.appendChild(box);
+      placeHighlightBox(box, el);
+      hl.items.push({ box, el });
+    });
+    window.addEventListener("scroll", repositionHighlights, true);
+    window.addEventListener("resize", repositionHighlights);
+    hl.timer = setTimeout(clearHighlights, ttl || 7000);
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && hl.items.length) clearHighlights();
+  }, true);
+
   // ---------------- выбор элемента мышью ("пипетка") ----------------
   let pickerActive = false;
   let overlay = null;
 
   function ensureOverlay() {
     if (overlay) return overlay;
-    overlay = document.createElement("div");
-    overlay.style.cssText =
-      "position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #2a6fdb;" +
-      "background:rgba(42,111,219,0.15);border-radius:3px;";
+    overlay = makeHighlightBox("");
     document.documentElement.appendChild(overlay);
     return overlay;
   }
 
   function onPickerMove(e) {
-    const r = e.target.getBoundingClientRect();
     const ov = ensureOverlay();
     ov.style.display = "block";
-    ov.style.left = r.left + "px";
-    ov.style.top = r.top + "px";
-    ov.style.width = r.width + "px";
-    ov.style.height = r.height + "px";
+    ov.firstChild.textContent = describeElement(e.target);
+    placeHighlightBox(ov, e.target);
   }
 
   function buildSelector(el) {

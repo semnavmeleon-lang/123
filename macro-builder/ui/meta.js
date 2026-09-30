@@ -12,31 +12,31 @@ export const CATEGORIES = {
   code: { label: "Код", color: "var(--c-code)" },
 };
 
-// tip - подсказка при наведении в палитре (на странице не выводится)
+// tip - подсказка при наведении (на странице не выводится); cat - раздел палитры
 export const STEP_META = {
-  navigate: { cat: "nav", icon: "🌐", tip: "Перейти по адресу в текущей вкладке" },
-  wait: { cat: "nav", icon: "⏱", tip: "Подождать заданное время" },
-  waitFor: { cat: "nav", icon: "👁", tip: "Ждать, пока на странице появится элемент" },
-  scroll: { cat: "nav", icon: "↕", tip: "Прокрутить страницу вниз или к элементу" },
-  switchTab: { cat: "nav", icon: "🗂", tip: "Продолжить в новой вкладке, которую открыла страница" },
-  closeTab: { cat: "nav", icon: "✖", tip: "Закрыть вкладку, открытую макросом, и вернуться в прежнюю" },
-  click: { cat: "act", icon: "👆", tip: "Нажать на элемент страницы" },
-  hover: { cat: "act", icon: "🖱", tip: "Навести курсор (для меню, раскрывающихся по наведению)" },
-  type: { cat: "act", icon: "⌨", tip: "Вписать текст в поле" },
-  keypress: { cat: "act", icon: "↵", tip: "Нажать клавишу (Enter, Tab…)" },
-  loadExcel: { cat: "data", icon: "📊", tip: "Загрузить столбец или таблицу из файла Excel/CSV" },
-  extract: { cat: "data", icon: "📥", tip: "Считать текст или значение элемента в переменную" },
-  extractTable: { cat: "data", icon: "🗃", tip: "Считать строки таблицы страницы в переменную" },
-  setVar: { cat: "data", icon: "🏷", tip: "Записать значение в переменную или увеличить счётчик" },
-  appendReport: { cat: "data", icon: "📝", tip: "Дописать блок в Markdown-отчёт" },
-  exportCsv: { cat: "data", icon: "💾", tip: "Сохранить считанную таблицу в CSV-файл" },
-  condition: { cat: "logic", icon: "🔀", tip: "Выполнить одни шаги, если проверки прошли, и другие, если нет" },
-  loopList: { cat: "logic", icon: "🔁", tip: "Повторить шаги для каждой строки таблицы или значения списка" },
-  loopCount: { cat: "logic", icon: "🔂", tip: "Повторить шаги заданное число раз" },
-  loopContinue: { cat: "logic", icon: "⏭", tip: "Пропустить остаток текущей записи и перейти к следующей" },
-  loopBreak: { cat: "logic", icon: "⏹", tip: "Прекратить цикл" },
-  stopMacro: { cat: "logic", icon: "🛑", tip: "Завершить весь макрос (не ошибка)" },
-  customJs: { cat: "code", icon: "🧩", tip: "Выполнить свой JavaScript на странице" },
+  navigate: { cat: "nav", tip: "Перейти по адресу в текущей вкладке" },
+  wait: { cat: "nav", tip: "Подождать заданное время" },
+  waitFor: { cat: "nav", tip: "Ждать, пока на странице появится элемент" },
+  scroll: { cat: "nav", tip: "Прокрутить страницу вниз или к элементу" },
+  switchTab: { cat: "nav", tip: "Продолжить в новой вкладке, которую открыла страница" },
+  closeTab: { cat: "nav", tip: "Закрыть вкладку, открытую макросом, и вернуться в прежнюю" },
+  click: { cat: "act", tip: "Нажать на элемент страницы" },
+  hover: { cat: "act", tip: "Навести курсор (для меню, раскрывающихся по наведению)" },
+  type: { cat: "act", tip: "Вписать текст в поле" },
+  keypress: { cat: "act", tip: "Нажать клавишу (Enter, Tab…)" },
+  loadExcel: { cat: "data", tip: "Загрузить столбец или таблицу из файла Excel/CSV" },
+  extract: { cat: "data", tip: "Считать текст или значение элемента в переменную" },
+  extractTable: { cat: "data", tip: "Считать строки таблицы страницы в переменную" },
+  setVar: { cat: "data", tip: "Записать значение в переменную или увеличить счётчик" },
+  appendReport: { cat: "data", tip: "Дописать блок в Markdown-отчёт" },
+  exportCsv: { cat: "data", tip: "Сохранить считанную таблицу в CSV-файл" },
+  condition: { cat: "logic", tip: "Выполнить одни шаги, если проверки прошли, и другие, если нет" },
+  loopList: { cat: "logic", tip: "Повторить шаги для каждой строки таблицы или значения списка" },
+  loopCount: { cat: "logic", tip: "Повторить шаги заданное число раз" },
+  loopContinue: { cat: "logic", tip: "Пропустить остаток текущей записи и перейти к следующей" },
+  loopBreak: { cat: "logic", tip: "Прекратить цикл" },
+  stopMacro: { cat: "logic", tip: "Завершить весь макрос (не ошибка)" },
+  customJs: { cat: "code", tip: "Выполнить свой JavaScript на странице" },
 };
 
 // Порядок в палитре: сначала самое частое
@@ -276,4 +276,54 @@ export function collectVars(macro) {
   });
   lists.forEach((n) => all.add(n));
   return { all: [...all], lists: [...lists] };
+}
+
+// Источники значений для полей «Что ввести», «Содержит текст», «Значение»: столбцы загруженной таблицы,
+// текущая запись цикла, остальные переменные и служебные значения. Каждый элемент - { value: "${имя}", label }.
+export function collectValueSources(macro) {
+  const seen = new Set();
+  const groups = [];
+  const add = (label, items) => {
+    if (items.length) groups.push({ label, items });
+  };
+  const item = (name, label) => {
+    seen.add(name);
+    return { value: "${" + name + "}", label };
+  };
+
+  const columns = [];
+  walk(macro && macro.steps, (st) => {
+    if (st.type !== "loadExcel" || st.mode !== "rows") return;
+    for (const c of st.columns || []) {
+      if (c.varName && !seen.has(c.varName)) columns.push(item(c.varName, c.header ? `${c.header}  (${c.varName})` : c.varName));
+    }
+  });
+  add("Столбцы таблицы", columns);
+
+  const loops = [];
+  walk(macro && macro.steps, (st) => {
+    if ((st.type === "loopList" || st.type === "loopCount") && st.itemVar && !seen.has(st.itemVar)) {
+      loops.push(item(st.itemVar, st.type === "loopList" ? `Текущая запись цикла  (${st.itemVar})` : `Номер повтора  (${st.itemVar})`));
+    }
+  });
+  add("Цикл", loops);
+
+  const others = [];
+  for (const i of (macro && macro.inputs) || []) if (i.key && !seen.has(i.key)) others.push(item(i.key, `Параметр запуска  (${i.key})`));
+  walk(macro && macro.steps, (st) => {
+    const name = st.type === "customJs" ? st.saveTo : ["extract", "setVar"].includes(st.type) ? st.varName : "";
+    if (name && !seen.has(name)) others.push(item(name, `Значение со страницы  (${name})`));
+  });
+  add("Другие переменные", others);
+
+  add("Служебные", [
+    item("_row", "Номер строки Excel  (_row)"),
+    item("_index", "Номер записи в цикле  (_index)"),
+    item("_total", "Всего записей  (_total)"),
+    item("_error", "Текст ошибки  (_error)"),
+    item("_date", "Сегодняшняя дата  (_date)"),
+    item("_time", "Текущее время  (_time)"),
+    item("_now", "Дата и время  (_now)"),
+  ]);
+  return groups;
 }
