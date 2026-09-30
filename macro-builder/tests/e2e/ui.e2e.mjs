@@ -379,6 +379,25 @@ try {
   await insp.getByRole("button", { name: "Проверить шаг" }).click();
   await b.waitForFunction(() => /Готово|Ошибка/.test(document.querySelector('[data-role="drawer"] .drawer-title')?.textContent || ""), null, { timeout: 20000 });
   assert.equal(await page.inputValue("#q"), "Тишин Юрий Романович", "«Проверить шаг» вне цикла тоже берёт первую запись");
+  // «В цикл»: шаг переезжает в новый цикл по таблице, предупреждение исчезает
+  await insp.getByRole("button", { name: "В цикл" }).click();
+  await b.waitForFunction(() => document.querySelectorAll('[data-role="step-row"][data-step-type="loopList"]').length === 2);
+  await b.waitForTimeout(600);
+  const loops = (await macros(b))[0].steps.filter((x) => x.type === "loopList");
+  assert.equal(loops.length, 2);
+  assert.equal(loops[1].sourceKey, "rows", "новый цикл сразу смотрит на таблицу");
+  assert.deepEqual(loops[1].steps.map((x) => x.type), ["type"]);
+  assert.equal(await row("type").last().locator(".tr-warn").innerText(), "", "внутри цикла столбец таблицы доступен");
+  assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
+  assert.equal(await insp.locator('[data-role="scope-warn"]').isHidden(), true);
+  // «Вынести»: шаг встаёт сразу после цикла, предупреждение возвращается
+  await insp.getByRole("button", { name: "Вынести" }).click();
+  await b.waitForTimeout(600);
+  const after = (await macros(b))[0].steps;
+  assert.deepEqual(after.slice(-2).map((x) => x.type), ["loopList", "type"]);
+  assert.equal(await row("type").last().locator(".tr-warn").innerText(), "Нет данных");
+  await insp.getByRole("button", { name: "Удалить" }).click();
+  await row("loopList").last().click();
   await insp.getByRole("button", { name: "Удалить" }).click();
   assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
 

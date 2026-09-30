@@ -63,18 +63,46 @@ function touch() {
 
 function locate(id) {
   let found = null;
-  (function visit(arr, path) {
+  (function visit(arr, path, parent) {
     arr.forEach((step, idx) => {
       if (found) return;
       const p = [...path, idx + 1];
       if (step.id === id) {
-        found = { arr, idx, step, path: p };
+        found = { arr, idx, step, path: p, parent };
         return;
       }
-      for (const b of branchesOf(step)) visit(b.arr, p);
+      for (const b of branchesOf(step)) visit(b.arr, p, { arr, idx, step });
     });
-  })(current.steps, []);
+  })(current.steps, [], null);
   return found;
+}
+
+// Откуда цикл «Для каждой записи» берёт список по умолчанию: таблица из «Данных из Excel/CSV», иначе первый список
+function defaultLoopSource() {
+  let table = "";
+  walkSteps(current.steps, (s) => { if (!table && s.type === "loadExcel" && s.mode === "rows" && s.varName) table = s.varName; });
+  return table || collectVars(current).lists[0] || "";
+}
+
+// Поместить шаг и все шаги ниже него (на этом же уровне) в новый цикл «Для каждой записи»
+function wrapInLoop({ arr, idx }) {
+  const loop = defaultStep("loopList");
+  loop.sourceKey = defaultLoopSource();
+  loop.steps = arr.splice(idx);
+  arr.push(loop);
+  touch();
+  renderTree();
+  renderInspector();
+  toast(`В цикл помещено шагов: ${loop.steps.length}`, "ok");
+}
+
+// Вынести шаг из цикла или условия: он встанет сразу после него
+function moveOut({ arr, idx, parent }) {
+  const [step] = arr.splice(idx, 1);
+  parent.arr.splice(parent.idx + 1, 0, step);
+  touch();
+  renderTree();
+  renderInspector();
 }
 
 // ---------------- API для редакторов шагов ----------------
@@ -449,10 +477,7 @@ function refreshDatalist() {
 
 function addStep(arr, type) {
   const s = defaultStep(type);
-  if (type === "loopList") {
-    const lists = collectVars(current).lists;
-    if (lists.length) s.sourceKey = lists[0];
-  }
+  if (type === "loopList") s.sourceKey = defaultLoopSource() || s.sourceKey;
   arr.push(s);
   selectedId = s.id;
   renderTree();
@@ -520,7 +545,7 @@ function renderInspector() {
     ui.inspector.append(h("div", { class: "insp-empty" }, "Выберите шаг в структуре слева."));
     return;
   }
-  const { arr, idx, step, path } = loc;
+  const { arr, idx, step, path, parent } = loc;
   const move = (d) => {
     const j = idx + d;
     if (j < 0 || j >= arr.length) return;
@@ -535,6 +560,8 @@ function renderInspector() {
     button("Проверить шаг", { kind: "small", tip: "Выполнить только этот шаг на рабочей вкладке", onClick: () => runSingleStep(step) }),
     button("Вверх", { kind: "small", disabled: idx === 0, onClick: () => move(-1) }),
     button("Вниз", { kind: "small", disabled: idx === arr.length - 1, onClick: () => move(1) }),
+    button("В цикл", { kind: "small", tip: "Поместить этот шаг и все шаги ниже в цикл «Для каждой записи» (нужно, чтобы использовать столбцы таблицы)", onClick: () => wrapInLoop(loc) }),
+    parent ? button("Вынести", { kind: "small", tip: "Вынести шаг из цикла или условия: он встанет сразу после него", onClick: () => moveOut(loc) }) : null,
     button("Копировать", { kind: "small", onClick: () => { const c = cloneStep(step); arr.splice(idx + 1, 0, c); selectedId = c.id; touch(); renderTree(); renderInspector(); } }),
     button("Удалить", { kind: "small danger", onClick: () => { arr.splice(idx, 1); selectedId = arr[Math.min(idx, arr.length - 1)] ? arr[Math.min(idx, arr.length - 1)].id : "macro"; touch(); renderTree(); renderInspector(); } })
   );
