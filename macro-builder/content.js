@@ -283,8 +283,26 @@
     return null;
   }
 
+  // Видимый текст элемента. textContent склеивает слова из соседних элементов без пробела
+  // (<span>Иванов</span><span>Иван</span> -> «ИвановИван»), а по такому тексту не сравнить ФИО по словам.
+  // Поэтому между текстом из разных узлов вставляется пробел, если его там нет, а пробелы схлопываются.
+  const TEXT_SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+  function elementText(el) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && TEXT_SKIP.has(n.parentElement.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let out = "";
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n.nodeValue;
+      if (!t) continue;
+      if (out && !/\s$/.test(out) && !/^\s/.test(t)) out += " ";
+      out += t;
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
   function readValue(el, attr) {
-    if (attr === "text") return (el.textContent || "").trim();
+    if (attr === "text") return elementText(el);
     if (attr === "value") return el.value != null ? el.value : "";
     if (attr === "html") return el.innerHTML;
     if (attr === "hrefAbs") return el.href || "";

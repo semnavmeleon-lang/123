@@ -70,6 +70,17 @@ module.exports = function start() {
       res.setHeader("content-type", "text/html; charset=utf-8");
       if (u.pathname === "/policy") return res.end(policyPage(u.searchParams.get("n")));
       if (u.pathname === "/forms") return res.end(formsPage());
+      // ячейка списка результатов собрана из отдельных элементов (слова без пробелов между ними), карточка - обычным текстом
+      if (u.pathname === "/names") {
+        return res.end(page(`<div id="cell"><span>Еременко</span><span>Сергей</span><span>Иванович</span></div>
+          <div id="cell2"><div>Дорохин</div><div>Виктор</div><div>Анатольевич</div></div>
+          <div id="cell3"><b>Пет</b>ров<br>Пётр</div>
+          <div id="card"><span>Еременко Сергей Иванович, дата рождения: 05.10.1968</span></div>
+          <div id="card2"><span>Иванов Иван Иванович, дата рождения: 01.01.1980</span></div>
+          <div id="pre">  много    пробелов
+            и строк  </div>
+          <div id="hid">видно<script>window.x=1</script><style>.q{}</style></div>`));
+      }
       res.end(searchPage());
     }).listen(0, () => resolve({ server, port: server.address().port }));
   });

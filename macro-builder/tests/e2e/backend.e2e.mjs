@@ -251,6 +251,41 @@ try {
   assert.equal(r.ok, false);
   assert.match(r.error, /Не задана переменная \$\{nope\}/, "и в адресе страницы");
 
+  // ---------- 2g. текст из соседних элементов не склеивается, сравнение ФИО по словам работает ----------
+  console.log("== 2g. считывание текста: слова из соседних элементов разделяются пробелом; ФИО со списка и из карточки (с датой) совпадают");
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports", "mb_progress"]));
+  const readText = (selector, name) => st("extract", { selector, attr: "text", varName: name, timeoutMs: 1500 });
+  const sameFio = (left, right) => st("condition", {
+    logic: "any",
+    tests: [
+      { ...defaultTest("var"), left, op: "containsWords", right },
+      { ...defaultTest("var"), left: right, op: "containsWords", right: left },
+    ],
+    then: [st("setVar", { varName: "verdict", value: "совпало - не пишем" })],
+    else: [st("setVar", { varName: "verdict", value: "НЕ СОВПАЛО - пишем" })],
+  });
+  r = await runMacro(b, {
+    id: "m_names", name: "names", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [
+      st("navigate", { url: base + "names" }),
+      readText("#cell", "a"), readText("#cell2", "b"), readText("#cell3", "c"), readText("#card", "card"), readText("#card2", "card2"),
+      readText("#pre", "pre"), readText("#hid", "hid"),
+      sameFio("${a}", "${card}"),
+      st("setVar", { varName: "v1", value: "${verdict}" }),
+      sameFio("${a}", "${card2}"),
+      st("setVar", { varName: "v2", value: "${verdict}" }),
+      sameFio("${b}", "${card}"),
+      st("setVar", { varName: "v3", value: "${verdict}" }),
+      st("appendReport", { filename: "e2e-names.md", header: "", template: "a=${a}|b=${b}|c=${c}|pre=${pre}|hid=${hid}|v1=${v1}|v2=${v2}|v3=${v3}" }),
+    ],
+  });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(
+    (await storage(b, "mb_reports"))["e2e-names.md"].text,
+    "a=Еременко Сергей Иванович|b=Дорохин Виктор Анатольевич|c=Пет ров Пётр|pre=много пробелов и строк|hid=видно|v1=совпало - не пишем|v2=НЕ СОВПАЛО - пишем|v3=НЕ СОВПАЛО - пишем\n",
+    "«ЕременкоСергейИванович» больше не склеивается; та же персона совпала, другая - нет"
+  );
+
   // ---------- 2c. очистка поля ----------
   console.log("== 2c. «Очистить поле»: стирает текст, обычный «Ввести текст» без очистки дописывает");
   await b.evaluate(() => chrome.storage.local.remove(["mb_reports"]));
