@@ -77,14 +77,56 @@ export function findColumnIndex(rows, { hasHeader, colLabel, colIndex }) {
   return Number.isInteger(idx) && idx >= 0 && idx < cols.length ? idx : 0;
 }
 
-export function extractColumn(rows, { colIndex = 0, hasHeader = true, trim = true, skipEmpty = true, unique = false } = {}) {
+// ---------------- пропуск строк по длине значения ----------------
+
+export const LENGTH_OPS = {
+  neq: "не равна",
+  gt: "больше",
+  lt: "меньше",
+  eq: "равна",
+  gte: "больше или равна",
+  lte: "меньше или равна",
+};
+export const LENGTH_COUNT = { chars: "все символы", digits: "только цифры", nospace: "символы без пробелов" };
+
+// Длина в символах (по кодовым точкам, а не UTF-16 единицам); digits/nospace - как считать.
+export function valueLength(value, count) {
+  const t = String(value ?? "");
+  if (count === "digits") return (t.match(/\d/g) || []).length;
+  if (count === "nospace") return [...t.replace(/\s/g, "")].length;
+  return [...t].length;
+}
+
+// Правило { col, op, n, count } срабатывает (строку надо ПРОПУСТИТЬ), если длина значения <op> n.
+// Правило без числа n не действует. col - имя переменной столбца (в режиме «один столбец» не нужно).
+export function lengthRuleMatches(rule, value) {
+  const n = Number(rule.n);
+  if (rule.n === "" || rule.n == null || !Number.isFinite(n)) return false;
+  const len = valueLength(value, rule.count);
+  switch (rule.op) {
+    case "eq": return len === n;
+    case "neq": return len !== n;
+    case "gt": return len > n;
+    case "gte": return len >= n;
+    case "lt": return len < n;
+    case "lte": return len <= n;
+    default: return false;
+  }
+}
+
+export function extractColumn(rows, { colIndex = 0, hasHeader = true, trim = true, skipEmpty = true, unique = false, lengthRules = [] } = {}) {
   const out = [];
   const seen = new Set();
   let truncated = false;
+  let skipped = 0;
   for (let r = hasHeader ? 1 : 0; r < rows.length; r++) {
     let v = String(rows[r][colIndex] ?? "");
     if (trim) v = v.trim();
     if (skipEmpty && v.trim() === "") continue;
+    if (lengthRules.some((rule) => lengthRuleMatches(rule, v))) {
+      skipped++;
+      continue;
+    }
     if (unique) {
       if (seen.has(v)) continue;
       seen.add(v);
@@ -95,5 +137,71 @@ export function extractColumn(rows, { colIndex = 0, hasHeader = true, trim = tru
     }
     out.push(v);
   }
-  return { values: out, truncated };
+  return { values: out, truncated, skipped };
+}
+
+// ---------------- таблица построчно (несколько столбцов) ----------------
+
+// В режиме «строки» каждая строка хранится целиком, поэтому лимит меньше, чем для одного столбца.
+export const MAX_ROWS = 10000;
+
+// Как sheetToRows, но пустые строки сохраняются, чтобы знать настоящий номер строки в Excel:
+// { rows, firstRow } - rows[i] лежит на строке Excel firstRow + i (нумерация с 1).
+export function sheetToGrid(XLSX, workbook, sheetName) {
+  const ws = workbook.Sheets[sheetName];
+  if (!ws || !ws["!ref"]) return { rows: [], firstRow: 1 };
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "", blankrows: true });
+  return {
+    rows: aoa.map((row) => row.map((v) => (v == null ? "" : String(v)))),
+    firstRow: XLSX.utils.decode_range(ws["!ref"]).s.r + 1,
+  };
+}
+
+const isBlankRow = (row) => row.every((v) => String(v).trim() === "");
+
+// Столбцы для выбора и «строки без пустых» (для listColumns заголовок - первая непустая строка).
+export function gridNonBlankRows(grid) {
+  return grid.rows.filter((r) => !isBlankRow(r));
+}
+
+// columns: [{ index, varName }] -> [{ [varName]: значение, ..., _row: номер строки Excel }]
+export function extractRows(grid, { columns = [], hasHeader = true, trim = true, skipEmpty = true, unique = false, lengthRules = [] } = {}) {
+  const out = [];
+  const seen = new Set();
+  let truncated = false;
+  let skipped = 0;
+  let headerSeen = !hasHeader;
+  for (let i = 0; i < grid.rows.length; i++) {
+    const row = grid.rows[i];
+    if (isBlankRow(row)) continue;
+    if (!headerSeen) {
+      headerSeen = true; // первая непустая строка - заголовок
+      continue;
+    }
+    const item = {};
+    let anyValue = false;
+    for (const c of columns) {
+      let v = String(row[c.index] ?? "");
+      if (trim) v = v.trim();
+      if (v.trim() !== "") anyValue = true;
+      item[c.varName] = v;
+    }
+    if (skipEmpty && !anyValue) continue;
+    if (lengthRules.some((rule) => rule.col in item && lengthRuleMatches(rule, item[rule.col]))) {
+      skipped++;
+      continue;
+    }
+    if (unique) {
+      const key = JSON.stringify(columns.map((c) => item[c.varName]));
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    if (out.length >= MAX_ROWS) {
+      truncated = true;
+      break;
+    }
+    item._row = grid.firstRow + i;
+    out.push(item);
+  }
+  return { rows: out, truncated, skipped };
 }

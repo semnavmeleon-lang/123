@@ -3,6 +3,9 @@
 // и дублирует у себя только то немногое, что реально нужно (см. content.js).
 
 export const STORAGE_KEY = "mb_macros";
+// Накопленные MD-отчёты { имяФайла: { text, updatedAt } } и прогресс циклов { "макрос:шаг": { sig, done } }
+export const REPORTS_KEY = "mb_reports";
+export const PROGRESS_KEY = "mb_progress";
 
 export function uid(prefix = "s") {
   return prefix + "_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -33,13 +36,53 @@ export function newMacro(name = "Новый макрос") {
 // шагов и для строкового представления числовых полей (count и т.п.).
 export function substitute(str, vars) {
   if (typeof str !== "string" || !vars) return str;
-  return str.replace(/\$\{([a-zA-Z_]\w*)\}/g, (_, key) => (key in vars ? String(vars[key]) : ""));
+  return str.replace(/\$\{([a-zA-Z_]\w*)\}/g, (_, key) => {
+    if (key in vars) return String(vars[key]);
+    if (key in BUILTIN_VARS) return BUILTIN_VARS[key]();
+    return "";
+  });
+}
+
+const pad2 = (n) => String(n).padStart(2, "0");
+// Встроенные переменные: ${_now} 2026-09-30 14:05:09, ${_date} 2026-09-30, ${_time} 14:05:09
+const BUILTIN_VARS = {
+  _date: () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  },
+  _time: () => {
+    const d = new Date();
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  },
+  _now: () => `${BUILTIN_VARS._date()} ${BUILTIN_VARS._time()}`,
+};
+
+// ---------------- проверки условий ----------------
+
+export const TEST_KINDS = {
+  element: "Элемент есть на странице",
+  elementText: "Текст элемента сравнить со значением",
+  var: "Сравнить два значения / переменные",
+};
+
+export function defaultTest(kind) {
+  const base = { kind, negate: false, waitMs: 0 };
+  const sel = { selectorType: "css", selector: "", frameUrlIncludes: "", scopeSelector: "", scopeText: "", visibleOnly: true };
+  if (kind === "element") return { ...base, ...sel };
+  if (kind === "elementText") {
+    return { ...base, ...sel, attr: "text", op: "contains", value: "", which: "any", ignoreCase: true, yo: true, collapseSpaces: true, stripPunct: false };
+  }
+  return { ...base, kind: "var", left: "", op: "equals", right: "", ignoreCase: true, yo: true, collapseSpaces: true, stripPunct: false };
 }
 
 // Общие для ЛЮБОГО шага поля политики повтора при ошибке - добавляются поверх
 // специфичных для типа полей, а не как отдельный тип шага.
 const RETRY_DEFAULTS = { retries: 0, retryDelayMs: 800, onError: "stop" };
-export const NO_RETRY_STEP_TYPES = ["exportCsv", "loadExcel"];
+export const NO_RETRY_STEP_TYPES = [
+  "exportCsv", "loadExcel", "setVar", "appendReport", "closeTab", "loopContinue", "loopBreak", "stopMacro",
+];
+// Поля области поиска (искать внутри строки/контейнера с нужным текстом) - у всех шагов с селектором
+const SCOPE = { scopeSelector: "", scopeText: "" };
 
 export function defaultStep(type) {
   const id = uid();
@@ -49,7 +92,10 @@ export function defaultStep(type) {
       step = { id, type, url: "https://" };
       break;
     case "click":
-      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", index: 0, timeoutMs: 8000 };
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 8000 };
+      break;
+    case "hover":
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 8000 };
       break;
     case "type":
       step = {
@@ -58,6 +104,7 @@ export function defaultStep(type) {
         selectorType: "css",
         selector: "",
         frameUrlIncludes: "",
+        ...SCOPE,
         index: 0,
         value: "",
         clear: true,
@@ -69,7 +116,7 @@ export function defaultStep(type) {
       step = { id, type, ms: 1000 };
       break;
     case "waitFor":
-      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", timeoutMs: 15000 };
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, timeoutMs: 15000 };
       break;
     case "extract":
       step = {
@@ -78,6 +125,7 @@ export function defaultStep(type) {
         selectorType: "css",
         selector: "",
         frameUrlIncludes: "",
+        ...SCOPE,
         index: 0,
         attr: "text",
         varName: "result",
@@ -116,26 +164,51 @@ export function defaultStep(type) {
         unique: false,
         truncated: false,
         values: [],
+        // mode "rows": несколько столбцов -> список строк-объектов, поля доступны как ${varName}
+        mode: "column",
+        columns: [],
+        rows: [],
+        // lengthRules: пропускать записи по длине значения [{ col, op, n, count }], skipped - сколько пропущено
+        lengthRules: [],
+        skipped: 0,
       };
       break;
     case "condition":
+      step = { id, type, logic: "all", tests: [defaultTest("element")], timeoutMs: 8000, then: [], else: [] };
+      break;
+    case "switchTab":
+      // source "popup" - ждать вкладку, открытую самой страницей (после клика);
+      // "href" - открыть ссылку найденного элемента средствами расширения (без блокировщика окон)
       step = {
-        id,
-        type,
-        selectorType: "css",
-        selector: "",
-        frameUrlIncludes: "",
-        mode: "exists",
-        timeoutMs: 3000,
-        then: [],
-        else: [],
+        id, type, source: "popup", selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 10000,
       };
+      break;
+    case "closeTab":
+      step = { id, type };
+      break;
+    case "setVar":
+      step = { id, type, varName: "status", value: "", mode: "set" };
+      break;
+    case "appendReport":
+      step = {
+        id, type, filename: "report.md", header: "# Отчёт — ${_now}\n", template: "", resetPerRun: true,
+      };
+      break;
+    case "loopContinue":
+    case "loopBreak":
+    case "stopMacro":
+      step = { id, type };
       break;
     case "loopCount":
       step = { id, type, count: "3", itemVar: "i", steps: [] };
       break;
     case "loopList":
-      step = { id, type, sourceKey: "", itemVar: "item", steps: [] };
+      step = {
+        id, type, sourceKey: "", itemVar: "item", steps: [],
+        // limit - обработать не больше N строк (0 = все); resume - помнить прогресс и продолжать с места остановки;
+        // onRowError "continue" - ошибка в строке не останавливает цикл, выполняются catchSteps и идём дальше
+        limit: 0, resume: false, onRowError: "stop", catchSteps: [],
+      };
       break;
     case "customJs":
       step = {
@@ -150,7 +223,7 @@ export function defaultStep(type) {
       step = { id, type, key: "Enter" };
       break;
     case "scroll":
-      step = { id, type, mode: "bottom", selectorType: "css", selector: "", frameUrlIncludes: "" };
+      step = { id, type, mode: "bottom", selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE };
       break;
     default:
       step = { id, type };
@@ -170,26 +243,34 @@ export const STEP_LABELS = {
   extract: "Извлечь данные",
   extractTable: "Извлечь таблицу",
   exportCsv: "Экспорт в CSV",
-  loadExcel: "Загрузить столбец из Excel/CSV",
-  condition: "Условие (элемент найден?)",
+  loadExcel: "Загрузить данные из Excel/CSV",
+  condition: "Условие (если … то … иначе)",
   loopCount: "Повторить N раз",
   loopList: "Для каждого значения из списка",
   customJs: "Свой JS-код",
   keypress: "Нажать клавишу",
   scroll: "Прокрутка страницы",
+  hover: "Навести курсор",
+  switchTab: "Перейти в новую вкладку",
+  closeTab: "Закрыть вкладку и вернуться назад",
+  setVar: "Задать переменную",
+  appendReport: "Дописать в MD-отчёт",
+  loopContinue: "Следующая строка (пропустить остаток)",
+  loopBreak: "Выйти из цикла",
+  stopMacro: "Завершить макрос",
 };
 
 export const STEP_GROUPS = [
-  { label: "Навигация", types: ["navigate", "wait", "waitFor", "scroll"] },
-  { label: "Взаимодействие", types: ["click", "type", "keypress"] },
-  { label: "Данные", types: ["loadExcel", "extract", "extractTable", "exportCsv"] },
-  { label: "Логика", types: ["condition", "loopCount", "loopList"] },
+  { label: "Навигация", types: ["navigate", "wait", "waitFor", "scroll", "switchTab", "closeTab"] },
+  { label: "Взаимодействие", types: ["click", "hover", "type", "keypress"] },
+  { label: "Данные", types: ["loadExcel", "extract", "extractTable", "setVar", "appendReport", "exportCsv"] },
+  { label: "Логика", types: ["condition", "loopCount", "loopList", "loopContinue", "loopBreak", "stopMacro"] },
   { label: "Код", types: ["customJs"] },
 ];
 
 // Шаги, у которых есть смысл в поле "селектор + фрейм" (используется builder.js,
 // чтобы не дублировать список типов в разметке).
-export const SELECTOR_STEP_TYPES = ["click", "type", "waitFor", "extract", "extractTable", "condition"];
+export const SELECTOR_STEP_TYPES = ["click", "hover", "type", "waitFor", "extract", "extractTable", "condition", "switchTab"];
 
 export function newTrigger(type) {
   const id = uid("t");

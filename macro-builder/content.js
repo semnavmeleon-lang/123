@@ -8,19 +8,28 @@
   if (window.__mbContentLoaded) return;
   window.__mbContentLoaded = true;
 
-  function queryAll(step) {
-    const { selectorType, selector } = step;
-    if (!selector) return [];
+  // Дублирует нормализацию из logic.js (content.js - classic-скрипт и не может импортировать модули).
+  function norm(s) {
+    return String(s == null ? "" : s).toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  }
+
+  function isVisible(el) {
+    if (!el.getClientRects || el.getClientRects().length === 0) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== "hidden" && cs.display !== "none";
+  }
+
+  // Поиск элементов selector внутри root (document или контейнер-строка).
+  // xpath внутри контейнера - относительный (начинайте с ".//").
+  function queryWithin(root, selectorType, selector) {
     if (selectorType === "text") {
-      const all = Array.from(document.querySelectorAll("body *"));
-      const needle = selector.trim().toLowerCase();
-      return all.filter(
-        (el) => el.children.length === 0 && (el.textContent || "").trim().toLowerCase().includes(needle)
-      );
+      const all = Array.from(root === document ? document.querySelectorAll("body *") : root.querySelectorAll("*"));
+      const needle = norm(selector);
+      return all.filter((el) => el.children.length === 0 && norm(el.textContent).includes(needle));
     }
     if (selectorType === "xpath") {
       try {
-        const result = document.evaluate(selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const result = document.evaluate(selector, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
         const arr = [];
         for (let i = 0; i < result.snapshotLength; i++) arr.push(result.snapshotItem(i));
         return arr;
@@ -29,10 +38,45 @@
       }
     }
     try {
-      return Array.from(document.querySelectorAll(selector));
+      return Array.from(root.querySelectorAll(selector));
     } catch (e) {
       return [];
     }
+  }
+
+  // Область поиска: контейнеры по CSS (scopeSelector, напр. "tr" или ".result-row"), из которых
+  // остаются только те, чей текст содержит scopeText. Так «три точки» ищутся именно в строке
+  // с нужным ФИО, а не первые на странице.
+  function scopeContainers(step) {
+    let list;
+    try {
+      list = Array.from(document.querySelectorAll(step.scopeSelector));
+    } catch (e) {
+      return [];
+    }
+    const needle = norm(step.scopeText);
+    return needle ? list.filter((el) => norm(el.textContent).includes(needle)) : list;
+  }
+
+  function queryAll(step) {
+    const { selectorType, selector } = step;
+    if (step.scopeSelector) {
+      const containers = scopeContainers(step);
+      if (!selector) return containers; // без селектора - сами найденные строки
+      const out = [];
+      const seen = new Set();
+      for (const c of containers) {
+        for (const el of queryWithin(c, selectorType, selector)) {
+          if (!seen.has(el)) {
+            seen.add(el);
+            out.push(el);
+          }
+        }
+      }
+      return out;
+    }
+    if (!selector) return [];
+    return queryWithin(document, selectorType, selector);
   }
 
   function getOne(step) {
@@ -76,7 +120,29 @@
     const el = await waitFor(step, Number(step.timeoutMs) || 8000);
     if (!el) throw new Error("Элемент не найден: " + step.selector);
     el.scrollIntoView({ block: "center" });
+    // Часть меню («три точки») открывается по pointerdown/mousedown, а не по click -
+    // шлём всю последовательность, как при настоящем нажатии мыши.
+    const r = el.getBoundingClientRect();
+    const pos = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+    for (const t of ["pointerover", "mouseover", "pointerdown", "mousedown"]) {
+      el.dispatchEvent(t.startsWith("pointer") ? new PointerEvent(t, { ...pos, pointerType: "mouse" }) : new MouseEvent(t, pos));
+    }
+    for (const t of ["pointerup", "mouseup"]) {
+      el.dispatchEvent(t.startsWith("pointer") ? new PointerEvent(t, { ...pos, pointerType: "mouse" }) : new MouseEvent(t, pos));
+    }
     el.click();
+    return null;
+  }
+
+  async function execHover(step) {
+    const el = await waitFor(step, Number(step.timeoutMs) || 8000);
+    if (!el) throw new Error("Элемент не найден: " + step.selector);
+    el.scrollIntoView({ block: "center" });
+    const r = el.getBoundingClientRect();
+    const pos = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    for (const t of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]) {
+      el.dispatchEvent(t.startsWith("pointer") ? new PointerEvent(t, { ...pos, pointerType: "mouse" }) : new MouseEvent(t, pos));
+    }
     return null;
   }
 
@@ -106,6 +172,7 @@
     if (attr === "text") return (el.textContent || "").trim();
     if (attr === "value") return el.value != null ? el.value : "";
     if (attr === "html") return el.innerHTML;
+    if (attr === "hrefAbs") return el.href || "";
     return el.getAttribute(attr) || "";
   }
 
@@ -159,8 +226,14 @@
     return null;
   }
 
+  // count - сколько элементов нашлось; texts - их тексты/значения (для проверок «текст элемента
+  // сравнить со значением»), само сравнение делает background.js (logic.js).
   async function execCheck(step) {
-    return { exists: queryAll(step).length > 0 };
+    let list = queryAll(step);
+    if (step.visibleOnly) list = list.filter(isVisible);
+    const res = { exists: list.length > 0, count: list.length };
+    if (step.wantTexts) res.texts = list.slice(0, 200).map((el) => readValue(el, step.attr || "text").slice(0, 2000));
+    return res;
   }
 
   // customJs сюда не попадает - изолированный мир content-скрипта имеет свою
@@ -172,6 +245,8 @@
     switch (step.type) {
       case "click":
         return { ok: true, value: await execClick(step) };
+      case "hover":
+        return { ok: true, value: await execHover(step) };
       case "type":
         return { ok: true, value: await execType(step) };
       case "waitFor":

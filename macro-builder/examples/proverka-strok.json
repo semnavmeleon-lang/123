@@ -1,0 +1,291 @@
+[
+  {
+    "id": "m_example_proverka_strok",
+    "name": "Проверка строк таблицы на сайте (пример)",
+    "updatedAt": 0,
+    "openInNewTab": false,
+    "inputs": [],
+    "triggers": [],
+    "steps": [
+      {
+        "id": "s1",
+        "type": "loadExcel",
+        "varName": "rows",
+        "fileName": "",
+        "sheet": "",
+        "hasHeader": true,
+        "colIndex": 0,
+        "colLabel": "",
+        "trim": true,
+        "skipEmpty": true,
+        "unique": false,
+        "truncated": false,
+        "values": [],
+        "mode": "rows",
+        "columns": [
+          {
+            "index": 1,
+            "header": "ФИО",
+            "varName": "fio"
+          },
+          {
+            "index": 0,
+            "header": "Номер полиса",
+            "varName": "polis"
+          }
+        ],
+        "rows": [],
+        "lengthRules": [
+          {
+            "col": "polis",
+            "op": "neq",
+            "n": "18",
+            "count": "chars"
+          }
+        ],
+        "skipped": 0
+      },
+      {
+        "id": "s19",
+        "type": "loopList",
+        "sourceKey": "rows",
+        "itemVar": "item",
+        "steps": [
+          {
+            "id": "s2",
+            "type": "navigate",
+            "url": "https://example.com/search",
+            "retries": 0,
+            "retryDelayMs": 800,
+            "onError": "stop"
+          },
+          {
+            "id": "s3",
+            "type": "type",
+            "selectorType": "css",
+            "selector": "#fio-input",
+            "frameUrlIncludes": "",
+            "scopeSelector": "",
+            "scopeText": "",
+            "index": 0,
+            "value": "${fio}",
+            "clear": true,
+            "pressEnter": false,
+            "timeoutMs": 8000,
+            "retries": 0,
+            "retryDelayMs": 800,
+            "onError": "stop"
+          },
+          {
+            "id": "s4",
+            "type": "click",
+            "selectorType": "css",
+            "selector": "#search-button",
+            "frameUrlIncludes": "",
+            "scopeSelector": "",
+            "scopeText": "",
+            "index": 0,
+            "timeoutMs": 8000,
+            "retries": 0,
+            "retryDelayMs": 800,
+            "onError": "stop"
+          },
+          {
+            "id": "s5",
+            "type": "wait",
+            "ms": 2000,
+            "retries": 0,
+            "retryDelayMs": 800,
+            "onError": "stop"
+          },
+          {
+            "id": "s17",
+            "type": "condition",
+            "logic": "all",
+            "tests": [
+              {
+                "kind": "elementText",
+                "negate": false,
+                "waitMs": 3000,
+                "selectorType": "css",
+                "selector": ".search-result .fio",
+                "frameUrlIncludes": "",
+                "scopeSelector": "",
+                "scopeText": "",
+                "visibleOnly": true,
+                "attr": "text",
+                "op": "containsWords",
+                "value": "${fio}",
+                "which": "any",
+                "ignoreCase": true,
+                "yo": true,
+                "collapseSpaces": true,
+                "stripPunct": false
+              }
+            ],
+            "timeoutMs": 8000,
+            "then": [
+              {
+                "id": "s6",
+                "type": "click",
+                "selectorType": "css",
+                "selector": ".actions-menu-button",
+                "frameUrlIncludes": "",
+                "scopeSelector": "tr",
+                "scopeText": "${fio}",
+                "index": 0,
+                "timeoutMs": 8000,
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s7",
+                "type": "click",
+                "selectorType": "text",
+                "selector": "Посмотреть данные полиса",
+                "frameUrlIncludes": "",
+                "scopeSelector": "",
+                "scopeText": "",
+                "index": 0,
+                "timeoutMs": 8000,
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s8",
+                "type": "switchTab",
+                "source": "popup",
+                "selectorType": "css",
+                "selector": "",
+                "frameUrlIncludes": "",
+                "scopeSelector": "",
+                "scopeText": "",
+                "index": 0,
+                "timeoutMs": 10000,
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s9",
+                "type": "extract",
+                "selectorType": "css",
+                "selector": ".policy-holder",
+                "frameUrlIncludes": "",
+                "scopeSelector": "",
+                "scopeText": "",
+                "index": 0,
+                "attr": "text",
+                "varName": "holder",
+                "multiple": false,
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s10",
+                "type": "extract",
+                "selectorType": "css",
+                "selector": ".policy-status",
+                "frameUrlIncludes": "",
+                "scopeSelector": "",
+                "scopeText": "",
+                "index": 0,
+                "attr": "text",
+                "varName": "pstatus",
+                "multiple": false,
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s11",
+                "type": "closeTab"
+              },
+              {
+                "id": "s14",
+                "type": "condition",
+                "logic": "all",
+                "tests": [
+                  {
+                    "kind": "var",
+                    "negate": false,
+                    "waitMs": 0,
+                    "left": "${holder}",
+                    "op": "containsWords",
+                    "right": "${fio}",
+                    "ignoreCase": true,
+                    "yo": true,
+                    "collapseSpaces": true,
+                    "stripPunct": false
+                  }
+                ],
+                "timeoutMs": 8000,
+                "then": [
+                  {
+                    "id": "s12",
+                    "type": "setVar",
+                    "varName": "verdict",
+                    "value": "совпадает",
+                    "mode": "set"
+                  }
+                ],
+                "else": [
+                  {
+                    "id": "s13",
+                    "type": "setVar",
+                    "varName": "verdict",
+                    "value": "ФИО в полисе не совпадает",
+                    "mode": "set"
+                  }
+                ],
+                "retries": 0,
+                "retryDelayMs": 800,
+                "onError": "stop"
+              },
+              {
+                "id": "s15",
+                "type": "appendReport",
+                "filename": "Проверки/результат.md",
+                "header": "# Проверка строк — ${_now}\n",
+                "template": "## Строка ${_row}: ${fio}\n- Полис: ${polis}\n- Статус: ${pstatus}\n- Итог: ${verdict}\n",
+                "resetPerRun": true
+              }
+            ],
+            "else": [
+              {
+                "id": "s16",
+                "type": "appendReport",
+                "filename": "Проверки/результат.md",
+                "header": "# Проверка строк — ${_now}\n",
+                "template": "## Строка ${_row}: ${fio}\n- Полис: ${polis}\n- НЕ НАЙДЕНО в результатах поиска\n",
+                "resetPerRun": true
+              }
+            ],
+            "retries": 0,
+            "retryDelayMs": 800,
+            "onError": "stop"
+          }
+        ],
+        "limit": 0,
+        "resume": true,
+        "onRowError": "continue",
+        "catchSteps": [
+          {
+            "id": "s18",
+            "type": "appendReport",
+            "filename": "Проверки/результат.md",
+            "header": "# Проверка строк — ${_now}\n",
+            "template": "## Строка ${_row}: ${fio}\n- ОШИБКА: ${_error}\n",
+            "resetPerRun": true
+          }
+        ],
+        "retries": 0,
+        "retryDelayMs": 800,
+        "onError": "stop"
+      }
+    ]
+  }
+]

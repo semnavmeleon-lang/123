@@ -193,3 +193,22 @@ button#runBtn:hover { background: var(--primary-dark); }
   overflow-wrap: anywhere;
 }
 .field-note.warn { color: var(--warn); background: var(--warn-bg); }
+
+.hint { font-size: 12px; color: var(--text-faint); margin-top: 8px; }
+
+/* переменные: клик вставляет ${имя} в последнее выбранное поле */
+.vars-bar { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; align-items: center; font-size: 12px; color: var(--text-muted); }
+.var-chip {
+  border: 1px solid var(--border); background: var(--primary-bg); color: var(--primary-dark);
+  border-radius: 999px; padding: 1px 9px; font-size: 12px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.var-chip:hover { background: #dbe8fb; }
+
+/* условия: карточки проверок */
+.test-card { grid-column: 1 / -1; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: #fbfcfe; padding: 10px 12px; }
+.test-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.checks-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--text-muted); }
+.checks-row label { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; }
+.col-pick { grid-column: 1 / -1; display: grid; grid-template-columns: 18px 1fr 160px; gap: 8px; align-items: center; font-size: 13px; }
+.col-pick input[type=text] { width: 100%; }
+.branch.catch-branch { border-left-color: var(--error); }

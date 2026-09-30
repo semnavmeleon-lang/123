@@ -3,7 +3,26 @@
 // шаг за раз по команде отсюда - вся оркестрация (навигация, ожидание,
 // циклы, условия, переменные, повторы при ошибке, планировщик) живёт здесь.
 
-import { substitute, loadMacros, STORAGE_KEY, patternToRegex } from "./common.js";
+import { substitute, loadMacros, STORAGE_KEY, patternToRegex, REPORTS_KEY, PROGRESS_KEY } from "./common.js";
+import {
+  evaluateCondition,
+  listSignature,
+  sanitizeReportName,
+  appendBlock,
+  toBase64Utf8,
+  splitReport,
+  partFileName,
+} from "./logic.js";
+
+// «Следующая строка» / «Выйти из цикла» / «Завершить макрос» реализованы как исключения-сигналы:
+// они проходят сквозь вложенные условия до ближайшего цикла и не считаются ошибкой шага
+// (не повторяются и не попадают в журнал как ошибки).
+class FlowSignal extends Error {
+  constructor(kind) {
+    super(kind);
+    this.kind = kind; // "continue" | "break" | "stop"
+  }
+}
 
 const runs = new Map(); // runId -> { cancelled }
 let recordingTabId = null;
@@ -106,7 +125,7 @@ async function doNavigate(ctx, step) {
 
 function subStep(step, vars) {
   const out = { ...step };
-  for (const k of ["url", "selector", "value", "rowSelector"]) {
+  for (const k of ["url", "selector", "value", "rowSelector", "scopeSelector", "scopeText"]) {
     if (typeof out[k] === "string") out[k] = substitute(out[k], vars);
   }
   return out;
@@ -114,7 +133,7 @@ function subStep(step, vars) {
 
 function resolveList(ctx, step) {
   const raw = ctx.vars[step.sourceKey];
-  if (Array.isArray(raw)) return raw.map(String);
+  if (Array.isArray(raw)) return raw.map((x) => (x !== null && typeof x === "object" ? x : String(x)));
   return String(raw || "")
     .split(/\r?\n|,/)
     .map((s) => s.trim())
@@ -131,6 +150,166 @@ function toCsv(rows) {
   const lines = [cols.join(";")];
   for (const r of rows) lines.push(cols.map((c) => esc(r[c])).join(";"));
   return lines.join("\r\n");
+}
+
+// ---------------- вкладки: переход в новую вкладку и возврат ----------------
+
+// Вкладка, открытая страницей после клика (target=_blank / window.open): ищем среди созданных
+// во время запуска - по вкладке-родителю или, если родителя нет, в том же окне.
+function pickNewTab(ctx) {
+  for (let i = ctx.created.length - 1; i >= 0; i--) {
+    const t = ctx.created[i];
+    if (t.id === ctx.tabId || ctx.ignore.has(t.id)) continue;
+    const byOpener = t.openerTabId != null && ctx.known.has(t.openerTabId);
+    const byWindow = t.openerTabId == null && t.windowId === ctx.windowId;
+    if (byOpener || byWindow) {
+      ctx.created.splice(i, 1);
+      return t;
+    }
+  }
+  return null;
+}
+
+// Новая вкладка сначала about:blank, потом грузится - ждём, пока адрес и статус «complete»
+// продержатся стабильно, иначе первый же шаг попадёт в пустую страницу.
+async function waitTabReady(tabId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch (e) {
+      return;
+    }
+    const ready = tab.status === "complete" && tab.url && tab.url !== "about:blank" && !tab.pendingUrl;
+    if (ready) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= 400) return;
+    } else {
+      stableSince = 0;
+    }
+    await sleep(150);
+  }
+}
+
+async function doSwitchTab(ctx, step) {
+  const timeout = Number(step.timeoutMs) || 10000;
+  let tab = null;
+  if (step.source === "href") {
+    const res = await sendToContent(
+      ctx,
+      { action: "exec", step: subStep({ ...step, type: "extract", attr: "hrefAbs", multiple: false }, ctx.vars) },
+      timeout
+    );
+    if (!res || !res.ok || !res.value) throw new Error((res && res.error) || "У найденного элемента нет ссылки (href)");
+    tab = await chrome.tabs.create({ url: res.value, openerTabId: ctx.tabId, active: true });
+    ctx.ignore.add(tab.id);
+  } else {
+    const deadline = Date.now() + timeout;
+    while (!(tab = pickNewTab(ctx))) {
+      if (ctx.cancelled()) throw new Error("Остановлено пользователем");
+      if (Date.now() > deadline) {
+        throw new Error(
+          "Новая вкладка не открылась. Если страница открывает её через window.open, разрешите для сайта " +
+            "всплывающие окна в настройках Chrome или выберите вариант «открыть ссылку элемента»"
+        );
+      }
+      await sleep(200);
+    }
+  }
+  ctx.tabStack.push(ctx.tabId);
+  ctx.tabId = tab.id;
+  ctx.known.add(tab.id);
+  await waitTabReady(tab.id, 25000);
+  await ensureContentScript(tab.id);
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (e) {}
+  ctx.created.length = 0;
+}
+
+async function doCloseTab(ctx, silent) {
+  if (!ctx.tabStack.length) {
+    if (!silent) ctx.log({ type: "closeTab", status: "warn", message: "нет вкладки, открытой макросом, - ничего не закрыто" });
+    return;
+  }
+  const closing = ctx.tabId;
+  ctx.tabId = ctx.tabStack.pop();
+  ctx.known.delete(closing);
+  try {
+    await chrome.tabs.remove(closing);
+  } catch (e) {}
+  try {
+    await chrome.tabs.update(ctx.tabId, { active: true });
+  } catch (e) {}
+  ctx.created.length = 0;
+}
+
+// Закрывает вкладки, которые макрос открыл внутри итерации цикла и не закрыл сам, - иначе на
+// каждой строке таблицы их становилось бы всё больше.
+async function unwindTabs(ctx, depth) {
+  while (ctx.tabStack.length > depth) await doCloseTab(ctx, true);
+}
+
+// ---------------- прогресс циклов и MD-отчёты ----------------
+
+async function loadProgress() {
+  const data = await chrome.storage.local.get(PROGRESS_KEY);
+  return data[PROGRESS_KEY] || {};
+}
+
+async function saveProgressEntry(key, entry) {
+  const all = await loadProgress();
+  if (entry) all[key] = entry;
+  else delete all[key];
+  await chrome.storage.local.set({ [PROGRESS_KEY]: all });
+}
+
+async function loadReports() {
+  const data = await chrome.storage.local.get(REPORTS_KEY);
+  return data[REPORTS_KEY] || {};
+}
+
+// Буфер отчёта дублируется в chrome.storage.local (не чаще раза в секунду), чтобы при обрыве
+// запуска накопленное можно было скачать из конструктора; файл в «Загрузки» пишется в конце запуска.
+async function persistReports(ctx, force) {
+  if (!ctx.reports.size) return;
+  if (!force && Date.now() - ctx.lastReportPersist < 1000) return;
+  ctx.lastReportPersist = Date.now();
+  const all = await loadReports();
+  for (const [name, text] of ctx.reports) all[name] = { text, updatedAt: Date.now() };
+  await chrome.storage.local.set({ [REPORTS_KEY]: all });
+}
+
+async function doAppendReport(ctx, step) {
+  const name = sanitizeReportName(substitute(step.filename || "report.md", ctx.vars));
+  if (!ctx.reports.has(name)) {
+    let buf = "";
+    if (step.resetPerRun === false) buf = ((await loadReports())[name] || {}).text || "";
+    if (!buf && step.header) buf = appendBlock("", substitute(step.header, ctx.vars));
+    ctx.reports.set(name, buf);
+  }
+  ctx.reports.set(name, appendBlock(ctx.reports.get(name), substitute(step.template || "", ctx.vars)));
+  await persistReports(ctx, false);
+}
+
+async function flushReports(ctx) {
+  if (!ctx.reports.size) return;
+  await persistReports(ctx, true);
+  for (const [name, text] of ctx.reports) {
+    const parts = splitReport(text);
+    for (let i = 0; i < parts.length; i++) {
+      const filename = partFileName(name, i, parts.length);
+      await chrome.downloads.download({
+        url: "data:text/markdown;charset=utf-8;base64," + toBase64Utf8(parts[i]),
+        filename,
+        conflictAction: "overwrite",
+        saveAs: false,
+      });
+      ctx.log({ type: "appendReport", status: "ok", message: `отчёт сохранён: Загрузки/${filename}` });
+    }
+  }
 }
 
 // customJs выполняется НЕ через content.js, а через отдельную инъекцию в
@@ -189,6 +368,7 @@ async function runStepWithPolicy(ctx, step) {
       ctx.log({ type: step.type, status: "ok" });
       return;
     } catch (e) {
+      if (e instanceof FlowSignal) throw e;
       lastErr = e;
       if (i < attempts - 1) {
         ctx.log({ type: step.type, status: "retrying", message: `попытка ${i + 2} из ${attempts}: ${e.message}` });
@@ -215,42 +395,70 @@ async function runStep(ctx, step) {
       for (let i = 0; i < n; i++) {
         if (ctx.cancelled()) return;
         ctx.vars[step.itemVar || "i"] = i;
-        await runSteps(ctx, step.steps);
+        try {
+          await runSteps(ctx, step.steps);
+        } catch (e) {
+          if (!(e instanceof FlowSignal) || e.kind === "stop") throw e;
+          if (e.kind === "break") return;
+        }
       }
       return;
     }
-    case "loopList": {
-      const list = resolveList(ctx, step);
-      for (const item of list) {
-        if (ctx.cancelled()) return;
-        ctx.vars[step.itemVar || "item"] = item;
-        await runSteps(ctx, step.steps);
-      }
-      return;
-    }
+    case "loopList":
+      return runLoopList(ctx, step);
     case "condition": {
-      const res = await sendToContent(
-        ctx,
-        { action: "check", step: subStep(step, ctx.vars) },
-        Number(step.timeoutMs) || 5000
-      );
-      const exists = !!(res && res.exists);
-      const branch = step.mode === "notExists" ? !exists : exists;
-      await runSteps(ctx, branch ? step.then : step.else);
+      const deps = {
+        // t уже с подставленными переменными (см. evaluateCondition)
+        probe: (t, wantTexts) =>
+          sendToContent(ctx, { action: "check", step: { ...t, wantTexts, visibleOnly: !!t.visibleOnly } }, Number(step.timeoutMs) || 8000),
+        sleep,
+        now: () => Date.now(),
+        cancelled: () => ctx.cancelled(),
+      };
+      const { result, log } = await evaluateCondition(step, ctx.vars, deps);
+      for (const line of log) ctx.log({ type: step.type, status: "info", message: line });
+      ctx.log({ type: step.type, status: "info", message: result ? "условие выполнено → «то»" : "условие не выполнено → «иначе»" });
+      await runSteps(ctx, result ? step.then : step.else);
       return;
     }
+    case "switchTab":
+      return doSwitchTab(ctx, step);
+    case "closeTab":
+      return doCloseTab(ctx, false);
+    case "setVar": {
+      const name = step.varName;
+      if (!name) throw new Error("Не указано имя переменной");
+      const val = substitute(step.value ?? "", ctx.vars);
+      if (step.mode === "increment") ctx.vars[name] = (Number(ctx.vars[name]) || 0) + (val === "" ? 1 : Number(val) || 0);
+      else ctx.vars[name] = val;
+      return;
+    }
+    case "appendReport":
+      return doAppendReport(ctx, step);
+    case "loopContinue":
+      throw new FlowSignal("continue");
+    case "loopBreak":
+      throw new FlowSignal("break");
+    case "stopMacro":
+      throw new FlowSignal("stop");
     case "customJs": {
       const value = await runCustomJs(ctx, step);
       if (step.saveTo) ctx.vars[step.saveTo] = value;
       return;
     }
     case "loadExcel": {
-      const values = Array.isArray(step.values) ? step.values : [];
-      if (!values.length) {
-        throw new Error("В шаге нет данных - откройте макрос в конструкторе и выберите файл Excel/CSV");
+      const isRows = step.mode === "rows";
+      const data = Array.isArray(isRows ? step.rows : step.values) ? (isRows ? step.rows : step.values) : [];
+      if (!data.length) {
+        throw new Error(
+          step.skipped
+            ? `После пропуска по длине значения не осталось записей (пропущено ${step.skipped}) - проверьте правила в шаге`
+            : "В шаге нет данных - откройте макрос в конструкторе и выберите файл Excel/CSV"
+        );
       }
-      ctx.vars[step.varName || "list"] = values.slice();
-      ctx.log({ type: step.type, status: "info", message: `${values.length} знач. → ${step.varName || "list"}` });
+      const name = step.varName || (isRows ? "rows" : "list");
+      ctx.vars[name] = data.slice();
+      ctx.log({ type: step.type, status: "info", message: `${data.length} ${isRows ? "строк" : "знач."} → ${name}` });
       return;
     }
     case "exportCsv": {
@@ -266,13 +474,83 @@ async function runStep(ctx, step) {
       const res = await sendToContent(
         ctx,
         { action: "exec", step: subStep(step, ctx.vars) },
-        Number(step.timeoutMs) || 15000
+        // + запас: шаг на странице сам ждёт элемент timeoutMs и должен успеть ответить понятным
+        // «Элемент не найден», а не упереться в общий таймаут ожидания ответа
+        (Number(step.timeoutMs) || 15000) + 4000
       );
       if (!res || !res.ok) throw new Error((res && res.error) || "Шаг завершился с ошибкой");
       if ((step.type === "extract" || step.type === "extractTable") && step.varName) ctx.vars[step.varName] = res.value;
       return;
     }
   }
+}
+
+// Цикл по списку значений или строкам таблицы. Для строки-объекта её поля становятся переменными
+// (${fio}, ${policy}, ${_row}), плюс ${_index} и ${_total}. См. поля limit / resume / onRowError у шага.
+async function runLoopList(ctx, step) {
+  const list = resolveList(ctx, step);
+  const key = ctx.macroId + ":" + step.id;
+  const sig = listSignature(list);
+  let start = 0;
+  if (step.resume) {
+    const saved = (await loadProgress())[key];
+    if (saved && saved.sig === sig && saved.done > 0 && saved.done <= list.length) {
+      start = saved.done;
+      ctx.log({ type: step.type, status: "info", message: `продолжаю с записи ${start + 1} из ${list.length} (прогресс сохранён)` });
+    }
+  }
+  const limit = Math.max(0, Number(step.limit) || 0);
+  let processed = 0;
+  let finished = true;
+  for (let i = start; i < list.length; i++) {
+    if (ctx.cancelled()) return;
+    if (limit && processed >= limit) {
+      finished = false;
+      ctx.log({ type: step.type, status: "info", message: `достигнут лимит ${limit} записей` });
+      break;
+    }
+    const item = list[i];
+    ctx.vars[step.itemVar || "item"] = item;
+    if (item && typeof item === "object") Object.assign(ctx.vars, item);
+    ctx.vars._index = i + 1;
+    ctx.vars._total = list.length;
+    ctx.log({
+      type: step.type,
+      status: "info",
+      message: `запись ${i + 1} из ${list.length}${item && item._row ? ` (строка Excel ${item._row})` : ""}`,
+    });
+    ctx.created.length = 0;
+    const depth = ctx.tabStack.length;
+    let brk = false;
+    try {
+      await runSteps(ctx, step.steps);
+    } catch (e) {
+      if (e instanceof FlowSignal) {
+        if (e.kind === "stop") {
+          await unwindTabs(ctx, depth);
+          throw e;
+        }
+        brk = e.kind === "break";
+      } else if (step.onRowError === "continue" && !ctx.cancelled()) {
+        ctx.log({ type: step.type, status: "warn", message: `ошибка в записи ${i + 1}, иду дальше: ${e.message}` });
+        ctx.vars._error = e.message;
+        await unwindTabs(ctx, depth);
+        try {
+          await runSteps(ctx, step.catchSteps);
+        } catch (e2) {
+          if (!(e2 instanceof FlowSignal) || e2.kind === "stop") throw e2;
+          brk = e2.kind === "break";
+        }
+      } else {
+        throw e;
+      }
+    }
+    await unwindTabs(ctx, depth);
+    processed++;
+    if (step.resume) await saveProgressEntry(key, { sig, done: i + 1, at: Date.now() });
+    if (brk) break;
+  }
+  if (step.resume && finished) await saveProgressEntry(key, null);
 }
 
 async function getActiveTabId() {
@@ -283,29 +561,57 @@ async function getActiveTabId() {
 async function runMacro(macro, inputValues, runId, existingTabId) {
   const cancelState = { cancelled: false };
   runs.set(runId, cancelState);
+  const created = [];
+  const onCreated = (tab) => created.push(tab);
+  chrome.tabs.onCreated.addListener(onCreated);
+  const ctx = {
+    macroId: macro.id,
+    tabId: null,
+    windowId: null,
+    tabStack: [], // вкладки, из которых макрос перешёл в новые (для «закрыть и вернуться»)
+    known: new Set(), // вкладки макроса - открытые ими новые вкладки считаются «своими»
+    ignore: new Set(),
+    created,
+    reports: new Map(),
+    lastReportPersist: 0,
+    vars: { ...inputValues },
+    cancelled: () => !!runs.get(runId)?.cancelled,
+    log: (entry) => broadcast({ type: "mb-log", runId, entry }),
+  };
+  let failure = null;
   try {
     let tabId = existingTabId;
     if (macro.openInNewTab || !tabId) {
       const tab = await chrome.tabs.create({ url: "about:blank" });
       tabId = tab.id;
     }
+    ctx.tabId = tabId;
+    ctx.known.add(tabId);
+    try {
+      ctx.windowId = (await chrome.tabs.get(tabId)).windowId;
+    } catch (e) {}
+    created.length = 0;
     await ensureContentScript(tabId);
-
-    const ctx = {
-      tabId,
-      vars: { ...inputValues },
-      cancelled: () => !!runs.get(runId)?.cancelled,
-      log: (entry) => broadcast({ type: "mb-log", runId, entry }),
-    };
 
     broadcast({ type: "mb-run-start", runId, macroId: macro.id, macroName: macro.name });
     await runSteps(ctx, macro.steps);
-    broadcast({ type: "mb-run-done", runId, macroId: macro.id });
   } catch (e) {
-    broadcast({ type: "mb-run-error", runId, macroId: macro.id, message: e.message });
-  } finally {
-    runs.delete(runId);
+    if (e instanceof FlowSignal) {
+      // «Завершить макрос» - штатный выход; «Выйти из цикла»/«Следующая строка» вне цикла - ошибка построения
+      if (e.kind !== "stop") failure = { message: "Шаг «" + (e.kind === "break" ? "Выйти из цикла" : "Следующая строка") + "» использован вне цикла" };
+    } else {
+      failure = { message: e.message };
+    }
   }
+  chrome.tabs.onCreated.removeListener(onCreated);
+  try {
+    await flushReports(ctx);
+  } catch (e) {
+    ctx.log({ type: "appendReport", status: "warn", message: "не удалось сохранить отчёт в файл: " + e.message + " (накопленное можно скачать в конструкторе)" });
+  }
+  if (failure) broadcast({ type: "mb-run-error", runId, macroId: macro.id, message: failure.message });
+  else broadcast({ type: "mb-run-done", runId, macroId: macro.id });
+  runs.delete(runId);
 }
 
 function defaultInputValues(macro) {

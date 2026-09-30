@@ -17,6 +17,25 @@
         <div class="pool-list" id="sidebarList"></div>
         <button type="button" id="newMacroBtn" class="secondary-btn">+ Новый макрос</button>
       </div>
+
+      <div class="card">
+        <div class="pool-head"><h2>Отчёты (MD)</h2></div>
+        <div class="pool-list" id="reportsList"></div>
+        <div class="hint" id="reportsHint">Файл пишется в «Загрузки» в конце запуска. Здесь можно скачать накопленное, если запуск оборвался.</div>
+      </div>
+
+      <div class="card">
+        <div class="pool-head"><h2>Конфиг</h2></div>
+        <label class="checkbox-inline" style="margin-bottom:8px;">
+          <input type="checkbox" id="cfgIncludeData"> с данными таблиц (это персональные данные клиентов)
+        </label>
+        <button type="button" id="saveConfigBtn" class="secondary-btn">Сохранить конфиг в файл</button>
+        <label class="secondary-btn" style="display:block;text-align:center;cursor:pointer;margin-top:6px;">
+          Загрузить конфиг
+          <input id="loadConfigInput" type="file" accept="application/json" style="display:none">
+        </label>
+        <div class="hint" id="configHint">Сохраняются все макросы. При загрузке макрос с тем же id заменяется.</div>
+      </div>
     </aside>
 
     <main class="main">
@@ -50,6 +69,7 @@
         </div>
 
         <div class="section-label">Шаги</div>
+        <div class="vars-bar" id="varsBar" title="Клик вставляет ${имя} в последнее выбранное текстовое поле"></div>
         <div id="stepsRoot"></div>
         <div class="add-step-row">
           <select id="addStepSelect"></select>
