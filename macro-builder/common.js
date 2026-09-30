@@ -112,6 +112,7 @@ export function defaultStep(type) {
         value: "",
         clear: true,
         pressEnter: false,
+        blur: false,
         timeoutMs: 8000,
       };
       break;

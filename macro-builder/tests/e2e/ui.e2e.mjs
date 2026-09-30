@@ -32,10 +32,13 @@ const XLSX = require(path.join(EXT, "vendor/xlsx.full.min.js"));
 // Страница, на которой проверяются выбор и подсветка элементов
 const server = http.createServer((req, res) => {
   res.setHeader("content-type", "text/html; charset=utf-8");
-  res.end(`<!doctype html><meta charset="utf-8"><title>Тест-страница</title>
+  res.end(`<!doctype html><meta charset="utf-8"><title>Тест-страница</title><style>.p-calendar{display:inline-block;padding:14px;border:1px solid #999}</style>
     <input id="q" placeholder="ФИО">
     <table><tr class="row"><td>Тишин</td><td><button class="dots">Действия</button></td></tr>
-    <tr class="row"><td>Шапарь</td><td><button class="dots">Действия</button></td></tr></table>`);
+    <tr class="row"><td>Шапарь</td><td><button class="dots">Действия</button></td></tr></table>
+    <p id="plain">просто текст</p>
+    <formly-field class="ng-star-inserted"><p-calendar id="formly_46_date-range_contractIssueDate_1" class="ng-untouched ng-pristine"><span class="ng-tns-c196-13 p-calendar ng-star-inserted"><input type="text" class="p-inputtext p-component ng-tns-c196-13"></span></p-calendar></formly-field>
+    <formly-field class="ng-star-inserted"><p-calendar id="formly_46_date-range_contractIssueDate_2" class="ng-untouched ng-pristine"><span class="ng-tns-c196-13 p-calendar ng-star-inserted"><input type="text" class="p-inputtext p-component ng-tns-c196-13"></span></p-calendar></formly-field>`);
 }).listen(0);
 const PORT = server.address().port;
 
@@ -197,6 +200,8 @@ try {
   await b.locator('.tabbar button', { hasText: "Обновить" }).click();
   await b.waitForFunction(() => Array.from(document.querySelectorAll('[data-role="tab-select"] option')).some((o) => /Тест-страница/.test(o.textContent)));
   await b.selectOption('[data-role="tab-select"]', { label: "Тест-страница" });
+  await addTop();
+  await b.locator('[data-add="click"]').click(); // обычный шаг: подсвечивается любой элемент, не только поля ввода
   await insp.locator('[data-role="pick"] input').fill("button.dots");
   await insp.locator(".pick-buttons button", { hasText: "Показать" }).click();
   await page.waitForSelector(".__mb-hl");
@@ -237,6 +242,44 @@ try {
   assert.equal(await page.locator(".__mb-hl").first().evaluate((el) => getComputedStyle(el).borderTopColor), "rgb(255, 26, 26)");
   await page.click("#q");
   await b.waitForFunction(() => document.querySelector('[data-role="inspector"] [data-role="pick"] input')?.value === "#q");
+
+  // ---------- 8b. выбор поля ввода: обёртка календаря, «не поле», устойчивый селектор ----------
+  console.log("== 8b. «Указать поле на странице»: клик по обёртке выбирает поле внутри; по тексту - подсказка; селектор без ng-классов");
+  await b.bringToFront();
+  await addTop();
+  await b.locator('[data-add="clearField"]').click();
+  await insp.getByRole("button", { name: "Указать поле на странице" }).click();
+  await page.bringToFront();
+  const wrapSel = 'p-calendar[id$="_contractIssueDate_2"] span.p-calendar';
+  const edge = { position: { x: 4, y: 4 } }; // угол обёртки, а не само поле внутри
+  await page.hover(wrapSel, edge);
+  await page.waitForFunction(() => /\(поле ввода\)/.test(document.querySelector(".__mb-hl-label")?.textContent || ""));
+  const wrapLabel = await page.locator(".__mb-hl-label").first().innerText();
+  console.log("наведение на обёртку:", wrapLabel);
+  assert.match(wrapLabel, /^input\.p-inputtext/, "подсвечено само поле ввода, а не обёртка");
+  await page.hover("#plain");
+  await page.waitForFunction(() => /Здесь нет поля ввода/.test(document.querySelector(".__mb-hl-label")?.textContent || ""));
+  await page.click("#plain");
+  assert.match(await page.locator(".__mb-hl-banner").innerText(), /Здесь нет поля ввода/, "клик по тексту подсказывает и не завершает выбор");
+  await page.click(wrapSel, edge); // клик по обёртке
+  await b.bringToFront();
+  await b.waitForFunction(() => (document.querySelector('[data-role="inspector"] [data-role="pick"] input')?.value || "").length > 0 && !/^\.нет/.test(document.querySelector('[data-role="inspector"] [data-role="pick"] input').value));
+  const picked = await insp.locator('[data-role="pick"] input').inputValue();
+  console.log("выбранный селектор:", picked);
+  assert.doesNotMatch(picked, /ng-/, "в селекторе нет генерируемых классов ng-*");
+  assert.match(picked, /^p-calendar\[id\^="formly_"\]\[id\$="_date-range_contractIssueDate_2"\] > span\.p-calendar > input\.p-inputtext\.p-component$/);
+  const resolved = await page.evaluate((sel) => { const l = document.querySelectorAll(sel); return { n: l.length, tag: l[0]?.tagName, parentId: l[0]?.closest("p-calendar")?.id }; }, picked);
+  assert.deepEqual(resolved, { n: 1, tag: "INPUT", parentId: "formly_46_date-range_contractIssueDate_2" }, "селектор указывает ровно на нужное поле");
+  // «Показать» для шага записи в поле помечает не-поля
+  await insp.locator('[data-role="pick"] input').fill("#plain");
+  await insp.locator(".pick-buttons button", { hasText: "Показать" }).click();
+  await page.waitForSelector(".__mb-hl-banner");
+  assert.match(await page.locator(".__mb-hl-banner").innerText(), /Найдено элементов: 1, полей ввода: 0/);
+  // первая подпись на странице принадлежит невидимому оверлею выбора, поэтому смотрим все подписи
+  const marked = await page.locator(".__mb-hl-label:visible").allInnerTexts();
+  console.log("подписи для шага записи в поле:", marked.join(" | "));
+  assert.ok(marked.some((t) => /\[НЕ ПОЛЕ ВВОДА\]/.test(t)), "не-поле помечено в подписи");
+  await b.bringToFront();
 
   // ---------- 9. условия ----------
   console.log("== 9. условие: проверки, предупреждения, переход к проблемному шагу");

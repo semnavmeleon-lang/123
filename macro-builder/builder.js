@@ -86,8 +86,8 @@ const api = {
   },
   toast,
   valueSources: () => collectValueSources(current),
-  pick: (target, refs) => pickElement(target, refs),
-  highlight: (target, refs) => highlightOnPage(target, refs),
+  pick: (target, refs, opts) => pickElement(target, refs, opts),
+  highlight: (target, refs, opts) => highlightOnPage(target, refs, opts),
   async resetProgress(step) {
     const all = (await chrome.storage.local.get(PROGRESS_KEY))[PROGRESS_KEY] || {};
     delete all[current.id + ":" + step.id];
@@ -716,7 +716,7 @@ async function ensureContent(tabId) {
   } catch (e) {}
 }
 
-async function pickElement(target, refs) {
+async function pickElement(target, refs, opts = {}) {
   const tabId = getTargetTabId();
   if (!tabId) {
     toast("Выберите рабочую вкладку вверху страницы", "error");
@@ -724,7 +724,7 @@ async function pickElement(target, refs) {
   }
   await ensureContent(tabId);
   pickState = { target, refs };
-  chrome.tabs.sendMessage(tabId, { action: "startPicker" });
+  chrome.tabs.sendMessage(tabId, { action: "startPicker", inputOnly: !!opts.inputOnly });
   chrome.tabs.update(tabId, { active: true });
 }
 
@@ -737,7 +737,7 @@ function sampleVars() {
   return vars;
 }
 
-async function highlightOnPage(target, refs) {
+async function highlightOnPage(target, refs, opts = {}) {
   const tabId = getTargetTabId();
   if (!tabId) {
     toast("Выберите рабочую вкладку вверху страницы", "error");
@@ -766,7 +766,7 @@ async function highlightOnPage(target, refs) {
     } catch (e) {}
   }
   try {
-    const res = await chrome.tabs.sendMessage(tabId, { action: "highlight", step }, { frameId });
+    const res = await chrome.tabs.sendMessage(tabId, { action: "highlight", step, inputOnly: !!opts.inputOnly }, { frameId });
     chrome.tabs.update(tabId, { active: true });
     if (!res || !res.count) toast("На странице такой элемент не найден", "error");
   } catch (e) {
@@ -1007,7 +1007,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     window.focus();
     chrome.tabs.getCurrent((tab) => tab && chrome.tabs.update(tab.id, { active: true }));
     touch();
-    toast("Элемент выбран", "ok");
+    toast(msg.resolvedField ? "Выбрано поле ввода внутри нажатого элемента" : "Элемент выбран", "ok");
     return;
   }
   if (msg.action === "recordedEvent") {

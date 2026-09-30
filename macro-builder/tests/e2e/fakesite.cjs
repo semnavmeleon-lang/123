@@ -45,12 +45,31 @@ function policyPage(n) {
   return page(`<h1>Полис ${p.policy}</h1><div id="holder">${p.fio}</div><div id="status">${p.status}</div><div id="premium">${p.premium}</div>`);
 }
 
+// Формы со «сложными» полями: обёртки, label, contenteditable, shadow DOM, динамический id, неоднозначные блоки
+function formsPage() {
+  return page(
+    `<div id="wrap1" class="field"><span class="ph">Введите ФИО</span><input id="real1"></div>
+     <div id="wrap2" class="field"><label for="real2" id="lbl2">Телефон</label><input id="real2"></div>
+     <div id="ambig"><input id="a1"><input id="a2"></div>
+     <div id="plain">просто текст</div>
+     <div id="ce" contenteditable="true">старый текст</div>
+     <div id="host"></div>
+     <input type="checkbox" id="cb">
+     <div id="wrap3" class="mat"><div class="frame"><input id="mat-input-123456" placeholder="Фамилия"></div></div>
+     <formly-field class="ng-star-inserted"><p-calendar id="formly_46_date-range_contractIssueDate_1" class="ng-untouched ng-pristine"><span class="ng-tns-c196-13 p-calendar ng-star-inserted"><input type="text" class="p-inputtext p-component ng-tns-c196-13" onblur="this.dataset.blurred='yes'"><button type="button" class="p-datepicker-trigger">cal</button></span></p-calendar></formly-field>
+     <formly-field class="ng-star-inserted"><p-calendar id="formly_46_date-range_contractIssueDate_2" class="ng-untouched ng-pristine"><span class="ng-tns-c196-13 p-calendar ng-star-inserted"><input type="text" class="p-inputtext p-component ng-tns-c196-13" onblur="this.dataset.blurred='yes'"><button type="button" class="p-datepicker-trigger">cal</button></span></p-calendar></formly-field>`,
+    `const root = document.getElementById("host").attachShadow({ mode: "open" });
+     root.innerHTML = '<input id="sh" placeholder="в shadow DOM">';`
+  );
+}
+
 module.exports = function start() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const u = new URL(req.url, "http://x");
       res.setHeader("content-type", "text/html; charset=utf-8");
       if (u.pathname === "/policy") return res.end(policyPage(u.searchParams.get("n")));
+      if (u.pathname === "/forms") return res.end(formsPage());
       res.end(searchPage());
     }).listen(0, () => resolve({ server, port: server.address().port }));
   });

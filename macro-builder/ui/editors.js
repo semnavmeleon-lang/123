@@ -109,7 +109,11 @@ function valueField(target, key, api, { placeholder = "" } = {}) {
   return wrap;
 }
 
+// Шаги, которые пишут в поле ввода: для них выбор на странице и подсветка работают в режиме «только поле ввода»
+const INPUT_STEPS = ["type", "clearField"];
+
 function pickControl(target, api, keys = SEL_KEYS, compact = false) {
+  const opts = { inputOnly: INPUT_STEPS.includes(target.type) };
   const refs = { keys, input: null, type: null, frame: null };
   refs.type = selectInput(
     [["css", "Селектор"], ["text", "Текст"], ["xpath", "XPath"]],
@@ -126,8 +130,8 @@ function pickControl(target, api, keys = SEL_KEYS, compact = false) {
     h(
       "div",
       { class: "pick-buttons" },
-      button(compact ? "Указать" : "Указать на странице", { tip: "Нажмите и кликните нужный элемент на рабочей вкладке", onClick: () => api.pick(target, refs) }),
-      button("Показать", { tip: "Подсветить найденные элементы на рабочей вкладке красным с названием", onClick: () => api.highlight(target, refs) })
+      button(compact ? "Указать" : opts.inputOnly ? "Указать поле на странице" : "Указать на странице", { tip: opts.inputOnly ? "Нажмите и кликните по полю ввода на рабочей вкладке: обёртка и подпись тоже подойдут, поле определится само" : "Нажмите и кликните нужный элемент на рабочей вкладке", onClick: () => api.pick(target, refs, opts) }),
+      button("Показать", { tip: "Подсветить найденные элементы на рабочей вкладке красным с названием", onClick: () => api.highlight(target, refs, opts) })
     )
   );
 }
@@ -398,7 +402,8 @@ export function stepBody(step, api) {
           checks(
             "После ввода",
             checkbox("очистить поле перед вводом", step.clear, (v) => { step.clear = v; api.save(); }),
-            checkbox("нажать Enter", step.pressEnter, (v) => { step.pressEnter = v; api.save(); })
+            checkbox("нажать Enter", step.pressEnter, (v) => { step.pressEnter = v; api.save(); }),
+            checkbox("убрать фокус с поля", step.blur, (v) => { step.blur = v; api.save(); }, { tip: "Angular, PrimeNG и подобные формы проверяют и фиксируют значение при потере фокуса" })
           )
         ),
         advanced(step, api, ...selectorAdvanced(step, api)),

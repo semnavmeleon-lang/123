@@ -189,6 +189,65 @@ try {
   assert.equal(r.ok, false);
   assert.match(r.error, /Элемент не найден: \.dots-нет/, "нет такого поля - понятная ошибка");
 
+  // ---------- 2d. поле ввода: обёртки, label, contenteditable, shadow DOM ----------
+  console.log("== 2d. «Ввести текст» / «Очистить поле»: настоящее поле находится внутри обёртки, понятная ошибка если поля нет");
+  const formsUrl = base + "forms";
+  const valueOf = (selector, name) => st("extract", { selector, attr: "value", varName: name, timeoutMs: 1500 });
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports"]));
+  r = await runMacro(b, {
+    id: "m_forms", name: "forms", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [
+      st("navigate", { url: formsUrl }),
+      st("type", { selector: "#wrap1", value: "Иванов", timeoutMs: 1500 }), // обёртка -> input внутри
+      st("type", { selector: ".ph", value: "!", clear: false, timeoutMs: 1500 }), // placeholder-надпись -> единственное поле блока
+      st("type", { selector: "#lbl2", value: "8-900", timeoutMs: 1500 }), // подпись label -> связанное поле
+      st("type", { selector: "#ce", value: "новый", timeoutMs: 1500 }), // contenteditable
+      st("type", { selector: "#sh", value: "теневой", timeoutMs: 1500 }), // поле в shadow DOM
+      st("type", { selector: "#mat-input-123456", value: "Петров", timeoutMs: 1500 }),
+      valueOf("#real1", "v1"),
+      valueOf("#real2", "v2"),
+      st("extract", { selector: "#ce", attr: "text", varName: "v3", timeoutMs: 1500 }),
+      valueOf("#sh", "v4"),
+      valueOf("#mat-input-123456", "v5"),
+      st("clearField", { selector: "#wrap1", timeoutMs: 1500 }), // очистка через обёртку
+      valueOf("#real1", "v6"),
+      st("appendReport", { filename: "e2e-forms.md", header: "", template: "${v1}|${v2}|${v3}|${v4}|${v5}|${v6}" }),
+    ],
+  });
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await storage(b, "mb_reports"))["e2e-forms.md"].text, "Иванов!|8-900|новый|теневой|Петров|\n");
+  // календарь PrimeNG: выбрана обёртка span.p-calendar (как на скриншоте пользователя), поле лежит внутри
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports"]));
+  r = await runMacro(b, {
+    id: "m_cal", name: "cal", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [
+      st("navigate", { url: formsUrl }),
+      st("clearField", { selector: 'p-calendar[id$="_contractIssueDate_2"] span.p-calendar', timeoutMs: 1500 }),
+      st("type", { selector: 'p-calendar[id$="_contractIssueDate_2"] span.p-calendar', value: "01.10.2026", blur: true, timeoutMs: 1500 }),
+      st("extract", { selector: 'p-calendar[id$="_contractIssueDate_2"] input', attr: "value", varName: "d2", timeoutMs: 1500 }),
+      st("extract", { selector: 'p-calendar[id$="_contractIssueDate_2"] input', attr: "data-blurred", varName: "b2", timeoutMs: 1500 }),
+      st("extract", { selector: 'p-calendar[id$="_contractIssueDate_1"] input', attr: "value", varName: "d1", timeoutMs: 1500 }),
+      st("appendReport", { filename: "e2e-cal.md", header: "", template: "d2=${d2};b2=${b2};d1=${d1}" }),
+    ],
+  });
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await storage(b, "mb_reports"))["e2e-cal.md"].text, "d2=01.10.2026;b2=yes;d1=\n", "дата записана во второй календарь, первый не тронут, фокус снят");
+  // поля нет или их несколько: понятная ошибка вместо записи «не туда»
+  for (const [selector, label] of [["#plain", "просто текст"], ["#ambig", "несколько полей"], ["#cb", "флажок"]]) {
+    r = await runMacro(b, {
+      id: "m_forms_err", name: "forms-err", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+      steps: [st("navigate", { url: formsUrl }), st("type", { selector, value: "x", timeoutMs: 1500 })],
+    });
+    assert.equal(r.ok, false, label);
+    assert.match(r.error, /не является полем ввода/, `${label}: ${r.error}`);
+    assert.match(r.error, /Выберите само поле ввода/);
+  }
+  r = await runMacro(b, {
+    id: "m_forms_miss", name: "forms-miss", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [st("navigate", { url: formsUrl }), st("clearField", { selector: "#нет-такого", timeoutMs: 800 })],
+  });
+  assert.match(r.error, /Элемент не найден: #нет-такого/);
+
   // ---------- 3. сигналы, setVar, старое условие, stopMacro ----------
   console.log("== 3. continue / break / increment / старое условие / stopMacro");
   const legacyCond = { id: "old1", type: "condition", selectorType: "css", selector: "#q", frameUrlIncludes: "", mode: "notExists", timeoutMs: 3000,

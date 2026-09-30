@@ -19,6 +19,90 @@
     return cs.visibility !== "hidden" && cs.display !== "none";
   }
 
+  // ---------------- поля ввода ----------------
+  // Сайты оборачивают <input> в «красивые» контейнеры (подпись, рамка, placeholder-надпись). Клик по такой
+  // обёртке выбирает не поле, и писать в неё нельзя - поэтому настоящее поле определяется отдельно.
+  const NON_TEXT_INPUTS = ["checkbox", "radio", "button", "submit", "reset", "file", "hidden", "image", "range", "color"];
+
+  function isTextField(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "INPUT") return !NON_TEXT_INPUTS.includes((el.type || "text").toLowerCase());
+    return isEditableRoot(el);
+  }
+
+  function isEditableRoot(el) {
+    if (!el.isContentEditable) return false;
+    const parent = el.parentElement;
+    return !(parent && parent.isContentEditable);
+  }
+
+  function visibleFields(root) {
+    const out = [];
+    for (const el of root.querySelectorAll("input, textarea, [contenteditable]")) {
+      if (isTextField(el) && isVisible(el)) out.push(el);
+    }
+    return out;
+  }
+
+  // Ближайшее к точке поле из списка (сначала то, что содержит точку)
+  function nearestField(list, point) {
+    if (!point) return list[0];
+    let best = list[0];
+    let bestD = Infinity;
+    for (const f of list) {
+      const r = f.getBoundingClientRect();
+      if (point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom) return f;
+      const dx = Math.max(r.left - point.x, 0, point.x - r.right);
+      const dy = Math.max(r.top - point.y, 0, point.y - r.bottom);
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = f;
+      }
+    }
+    return best;
+  }
+
+  // Настоящее поле ввода для найденного/нажатого элемента или null: сам элемент; редактируемая область;
+  // поле, связанное с <label>; единственное поле внутри; единственное поле в ближайшем объемлющем блоке.
+  // Если полей несколько и непонятно, какое нужно, null (лучше ошибка, чем запись не в то поле).
+  function resolveInputElement(el, point) {
+    if (!el || el.nodeType !== 1) return null;
+    if (isTextField(el)) return el;
+    if (el.isContentEditable) {
+      let root = el;
+      while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
+      return root;
+    }
+    if (el.tagName === "LABEL" && el.control && isTextField(el.control)) return el.control;
+    const inside = visibleFields(el);
+    if (inside.length === 1) return inside[0];
+    if (inside.length > 1) return point ? nearestField(inside, point) : null;
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
+      const fields = visibleFields(node);
+      if (fields.length === 1) return fields[0];
+      if (fields.length > 1) return null;
+    }
+    return null;
+  }
+
+  // CSS-поиск с заходом в открытые shadow DOM (веб-компоненты): только если в обычном DOM ничего не нашлось
+  function deepQueryAll(root, selector) {
+    const out = [];
+    const visit = (r) => {
+      try {
+        out.push(...r.querySelectorAll(selector));
+      } catch (e) {
+        return;
+      }
+      for (const el of r.querySelectorAll("*")) if (el.shadowRoot) visit(el.shadowRoot);
+    };
+    visit(root);
+    return out;
+  }
+
   // Поиск элементов selector внутри root (document или контейнер-строка).
   // xpath внутри контейнера - относительный (начинайте с ".//").
   function queryWithin(root, selectorType, selector) {
@@ -38,7 +122,8 @@
       }
     }
     try {
-      return Array.from(root.querySelectorAll(selector));
+      const found = Array.from(root.querySelectorAll(selector));
+      return found.length ? found : deepQueryAll(root, selector);
     } catch (e) {
       return [];
     }
@@ -146,12 +231,26 @@
     return null;
   }
 
+  // Находит поле для шагов «Ввести текст» / «Очистить поле»: если селектор указывает на обёртку,
+  // берётся поле внутри неё; если поля нет вообще - понятная ошибка с названием найденного элемента.
+  async function findInputField(step) {
+    const found = await waitFor(step, Number(step.timeoutMs) || 8000);
+    if (!found) throw new Error("Элемент не найден: " + step.selector);
+    const field = resolveInputElement(found);
+    if (!field) {
+      throw new Error(
+        `Найденный элемент (${describeElement(found)}) не является полем ввода, и однозначного поля рядом нет. ` +
+          "Выберите само поле ввода: кнопкой «Указать на странице» на шаге."
+      );
+    }
+    return field;
+  }
+
   async function execType(step) {
-    const el = await waitFor(step, Number(step.timeoutMs) || 8000);
-    if (!el) throw new Error("Элемент не найден: " + step.selector);
+    const el = await findInputField(step);
     el.scrollIntoView({ block: "center" });
     el.focus();
-    if (el.isContentEditable) {
+    if (el.isContentEditable && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") {
       el.textContent = (step.clear ? "" : el.textContent || "") + step.value;
       el.dispatchEvent(new Event("input", { bubbles: true }));
     } else {
@@ -159,22 +258,21 @@
       setNativeValue(el, next);
     }
     if (step.pressEnter) fireEnter(el);
+    // Angular/PrimeNG проверяют и фиксируют значение при потере фокуса
+    if (step.blur) el.blur();
     return null;
   }
 
   // Стирает текст в поле ввода / textarea / contenteditable; фреймворки (React, Vue) получают input и change
   async function execClear(step) {
-    const el = await waitFor(step, Number(step.timeoutMs) || 8000);
-    if (!el) throw new Error("Элемент не найден: " + step.selector);
+    const el = await findInputField(step);
     el.scrollIntoView({ block: "center" });
     el.focus();
-    if (el.isContentEditable) {
+    if (el.isContentEditable && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") {
       el.textContent = "";
       el.dispatchEvent(new Event("input", { bubbles: true }));
-    } else if ("value" in el) {
-      setNativeValue(el, "");
     } else {
-      throw new Error("Элемент не является полем ввода: " + step.selector);
+      setNativeValue(el, "");
     }
     return null;
   }
@@ -298,14 +396,24 @@
     }
     if (msg.action === "highlight") {
       const list = queryAll(msg.step);
+      // для шагов ввода: настоящее поле под найденным элементом; не-поля помечаются в подписи
+      const fields = msg.inputOnly ? list.map((el) => resolveInputElement(el)) : [];
+      const marks = msg.inputOnly ? list.map((el, i) => (fields[i] ? (fields[i] === el ? "" : "поле ввода внутри") : "НЕ ПОЛЕ ВВОДА")) : [];
       if (list.length) {
         list[0].scrollIntoView({ block: "center", inline: "nearest" });
-        showHighlights(list, 7000);
+        showHighlights(msg.inputOnly ? list.map((el, i) => fields[i] || el) : list, 7000, marks);
       } else {
         clearHighlights();
       }
-      showBanner(list.length ? `Найдено элементов: ${list.length}. Esc - убрать подсветку` : "Элемент не найден");
-      sendResponse({ ok: true, count: list.length });
+      const good = fields.filter(Boolean).length;
+      showBanner(
+        !list.length
+          ? "Элемент не найден"
+          : msg.inputOnly
+            ? `Найдено элементов: ${list.length}, полей ввода: ${good}. Esc - убрать подсветку`
+            : `Найдено элементов: ${list.length}. Esc - убрать подсветку`
+      );
+      sendResponse({ ok: true, count: list.length, fields: good });
       return true;
     }
     if (msg.action === "clearHighlight") {
@@ -314,7 +422,7 @@
       return true;
     }
     if (msg.action === "startPicker") {
-      startPicker();
+      startPicker(msg.inputOnly);
       sendResponse({ ok: true });
       return true;
     }
@@ -420,10 +528,11 @@
   }
 
   // Подсвечивает элементы (номер + название), снимается через ttl мс или по Escape
-  function showHighlights(elements, ttl) {
+  function showHighlights(elements, ttl, marks) {
     clearHighlights();
     elements.slice(0, 40).forEach((el, i) => {
-      const box = makeHighlightBox(elements.length > 1 ? `${i + 1}. ${describeElement(el)}` : describeElement(el));
+      const mark = marks && marks[i] ? `   [${marks[i]}]` : "";
+      const box = makeHighlightBox((elements.length > 1 ? `${i + 1}. ${describeElement(el)}` : describeElement(el)) + mark);
       document.documentElement.appendChild(box);
       placeHighlightBox(box, el);
       hl.items.push({ box, el });
@@ -447,53 +556,140 @@
     return overlay;
   }
 
+  let pickerInputOnly = false;
+  let pickerTarget = null;
+
+  // Что выбрано под курсором: в режиме «поле ввода» - настоящее поле (даже если курсор над обёрткой,
+  // подписью или placeholder-надписью), иначе - сам элемент под курсором
+  function pickerResolve(e) {
+    const raw = (e.composedPath && e.composedPath()[0]) || e.target;
+    if (!raw || raw.nodeType !== 1) return { raw: null, target: null };
+    if (!pickerInputOnly) return { raw, target: raw };
+    return { raw, target: resolveInputElement(raw, { x: e.clientX, y: e.clientY }) };
+  }
+
   function onPickerMove(e) {
     const ov = ensureOverlay();
+    const { raw, target } = pickerResolve(e);
+    pickerTarget = target;
+    if (!raw) return;
     ov.style.display = "block";
-    ov.firstChild.textContent = describeElement(e.target);
-    placeHighlightBox(ov, e.target);
+    if (pickerInputOnly && !target) {
+      ov.firstChild.textContent = "Здесь нет поля ввода: " + describeElement(raw);
+      placeHighlightBox(ov, raw);
+      return;
+    }
+    ov.firstChild.textContent = describeElement(target) + (pickerInputOnly && target !== raw ? "   (поле ввода)" : "");
+    placeHighlightBox(ov, target);
+  }
+
+  // ---------------- построение устойчивого селектора ----------------
+  // Angular/PrimeNG/formly создают классы и идентификаторы, которые меняются от загрузки к загрузке и от
+  // состояния поля (ng-tns-c196-13, ng-touched, p-focus, formly_46_...). В селектор они не попадают.
+
+  function stableClass(c) {
+    if (/^_?ng-/i.test(c) || /^ember\d+/i.test(c) || /^(css|sc|jss|svelte)-[\w-]{4,}$/i.test(c)) return false;
+    if (/\d{3,}/.test(c) || /^[a-z]{1,3}-[0-9a-f]{6,}$/i.test(c)) return false;
+    // классы состояния: focus, filled, disabled, invalid, open...
+    return !/(^|[-_])(active|focus|focused|hover|open|opened|selected|checked|disabled|invalid|valid|dirty|touched|pristine|untouched|filled|expanded|collapsed|loading|highlight|highlighted|error)($|[-_])/i.test(c);
+  }
+
+  // Идентификатор: { auto } - целиком сгенерирован (mat-input-12, pn_id_7); { prefix, suffix } - счётчик внутри
+  // осмысленного имени formly_46_input_contractNumber_0; { stable } - обычный
+  function analyzeId(id) {
+    if (/^(mat-[\w-]*?|pn_id_|ember|react-select-|radix-|headlessui-[\w-]*?|ui-id-|rc_select_|:r)\d+:?$/i.test(id)) return { auto: true };
+    if (/^[0-9a-f]{8,}$/i.test(id) || /[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id)) return { auto: true };
+    const m = id.match(/^(formly_)(\d+)(_.+)$/);
+    if (m) return { prefix: m[1], suffix: m[3] };
+    if (/\d{3,}/.test(id)) return { auto: true };
+    return { stable: true };
+  }
+
+  function uniqueIn(root, sel) {
+    try {
+      return root.querySelectorAll(sel).length === 1;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Однозначный «якорь» по id: #id либо tag[id^="formly_"][id$="_..."]; null, если id непригоден или не уникален
+  function idAnchor(node, root) {
+    if (!node.id) return null;
+    const a = analyzeId(node.id);
+    if (a.auto) return null;
+    if (a.prefix) {
+      const sel = `${node.tagName.toLowerCase()}[id^="${a.prefix}"][id$="${a.suffix}"]`;
+      return uniqueIn(root, sel) ? sel : null;
+    }
+    const sel = "#" + CSS.escape(node.id);
+    return uniqueIn(root, sel) ? sel : null;
+  }
+
+  // Звено пути: тег + устойчивые классы (до двух) + порядковый номер среди одноимённых соседей, если без него не различить
+  function pathPart(node) {
+    const tag = node.tagName.toLowerCase();
+    let part = tag;
+    const classes = Array.from(node.classList || []).filter(stableClass).slice(0, 2);
+    if (classes.length) part += "." + classes.map((c) => CSS.escape(c)).join(".");
+    const parent = node.parentElement;
+    if (parent) {
+      const same = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+      const alike = same.filter((c) => {
+        try {
+          return c.matches(part);
+        } catch (e) {
+          return true;
+        }
+      });
+      if (alike.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
+    }
+    return part;
   }
 
   function buildSelector(el) {
-    if (el.id) return "#" + CSS.escape(el.id);
-    for (const attr of ["data-testid", "data-test", "data-qa", "name"]) {
+    const rootNode = el.getRootNode && el.getRootNode();
+    const root = rootNode instanceof ShadowRoot ? rootNode : document;
+    const tag = el.tagName.toLowerCase();
+    const direct = idAnchor(el, root);
+    if (direct) return direct;
+    // стабильные атрибуты - но только если они однозначно указывают на элемент
+    for (const attr of ["data-testid", "data-test", "data-qa", "name", "formcontrolname", "aria-label", "placeholder"]) {
       const v = el.getAttribute && el.getAttribute(attr);
-      if (v) return `[${attr}="${v.replace(/"/g, '\\"')}"]`;
+      if (!v) continue;
+      const sel = `${tag}[${attr}="${v.replace(/"/g, '\\"')}"]`;
+      if (uniqueIn(root, sel)) return sel;
     }
-    const parts = [];
+    // путь от элемента вверх: останавливаемся, как только селектор стал однозначным или встретился надёжный id
+    const chain = [];
     let node = el;
-    let depth = 0;
-    while (node && node.nodeType === 1 && depth < 6) {
-      if (node.id) {
-        parts.unshift(node.tagName.toLowerCase() + "#" + CSS.escape(node.id));
-        break;
-      }
-      let part = node.tagName.toLowerCase();
-      if (node.classList && node.classList.length) {
-        part += "." + Array.from(node.classList).slice(0, 2).map((c) => CSS.escape(c)).join(".");
-      }
-      const parent = node.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
-        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
-      }
-      parts.unshift(part);
-      node = parent;
-      depth++;
+    for (let depth = 0; node && node.nodeType === 1 && depth < 8; depth++) {
+      const anchor = node !== el ? idAnchor(node, root) : null;
+      chain.unshift(anchor || pathPart(node));
+      const sel = chain.join(" > ");
+      if (anchor || uniqueIn(root, sel)) return sel;
+      node = node.parentElement;
     }
-    return parts.join(" > ");
+    return chain.join(" > ");
   }
 
   function onPickerClick(e) {
     e.preventDefault();
     e.stopPropagation();
-    const el = e.target;
+    const { raw, target } = pickerResolve(e);
+    if (pickerInputOnly && !target) {
+      // это не поле ввода: выбор не завершаем, даём кликнуть ещё раз
+      showBanner("Здесь нет поля ввода. Кликните по самому полю (Esc - отмена)");
+      return;
+    }
+    const el = target || raw;
     stopPicker();
     chrome.runtime.sendMessage({
       action: "pickerResult",
       selector: buildSelector(el),
       text: (el.textContent || "").trim().slice(0, 80),
       frameUrl: window !== window.top ? location.href : "",
+      resolvedField: pickerInputOnly && el !== raw,
     });
   }
 
@@ -501,7 +697,8 @@
     if (e.key === "Escape") stopPicker();
   }
 
-  function startPicker() {
+  function startPicker(inputOnly) {
+    pickerInputOnly = !!inputOnly;
     if (pickerActive) return;
     pickerActive = true;
     document.addEventListener("mousemove", onPickerMove, true);
