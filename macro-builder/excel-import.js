@@ -34,15 +34,57 @@ export function readWorkbook(XLSX, buffer, fileName) {
     // raw:true - ячейки остаются текстом ("007" не превращается в 7), разделитель SheetJS определяет сам
     return XLSX.read(decodeTextBytes(new Uint8Array(buffer)), { type: "string", raw: true });
   }
-  return XLSX.read(buffer, { type: "array" });
+  // cellNF: формат числа ячейки (.z) нужен, чтобы отличить «Общий» формат от специального
+  return XLSX.read(buffer, { type: "array", cellNF: true });
+}
+
+// Текст ячейки так, как его видно в Excel. Исключение - длинные целые числа в «Общем» формате
+// (телефон, ИНН, номер карты): Excel в узком столбце показывает их как 8,9E+10, а на сайт нужно вводить
+// все цифры - берём само число.
+export function cellText(cell, XLSX) {
+  if (!cell || cell.v === undefined || cell.v === null) return "";
+  // у дат и части ячеек готового текста (.w) нет - его собирает format_cell по формату ячейки (.z)
+  let shown;
+  if (cell.w !== undefined && cell.w !== null) shown = String(cell.w);
+  else if (XLSX && XLSX.utils && XLSX.utils.format_cell) shown = String(XLSX.utils.format_cell(cell));
+  else shown = String(cell.v);
+  // формат даты, который SheetJS не понял, оставляет серийный номер (45000) - собираем дату сами: ДД.ММ.ГГГГ [ЧЧ:ММ]
+  if (cell.t === "n" && cell.z && shown === String(cell.v) && XLSX && XLSX.SSF && XLSX.SSF.is_date && XLSX.SSF.is_date(cell.z)) {
+    const d = XLSX.SSF.parse_date_code(cell.v);
+    if (d) {
+      const p2 = (n) => String(n).padStart(2, "0");
+      shown = `${p2(d.d)}.${p2(d.m)}.${d.y}` + (d.H || d.M ? ` ${p2(d.H)}:${p2(d.M)}` : "");
+    }
+  }
+  if (cell.t === "n" && Number.isInteger(cell.v) && Math.abs(cell.v) < 1e21 && (!cell.z || cell.z === "General") && /E[+-]?\d+$/i.test(shown)) {
+    return String(cell.v);
+  }
+  return shown;
+}
+
+// Лист -> массив строк-массивов текста ячеек. Столбцы считаются от A, строки - от первой строки диапазона.
+// keepBlank: сохранять пустые строки (нужны, чтобы знать настоящий номер строки в Excel).
+function sheetToAoa(XLSX, ws, keepBlank) {
+  if (!ws || !ws["!ref"]) return { rows: [], firstRow: 1 };
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const rows = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const row = [];
+    let blank = true;
+    for (let c = 0; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.v !== undefined && cell.v !== null) blank = false; // строка без единой ячейки - пустая
+      row.push(cellText(cell, XLSX));
+    }
+    if (blank && !keepBlank) continue;
+    rows.push(row);
+  }
+  return { rows, firstRow: range.s.r + 1 };
 }
 
 // Лист -> массив строк-массивов со значениями в том виде, как их видно в Excel (форматированный текст).
 export function sheetToRows(XLSX, workbook, sheetName) {
-  const ws = workbook.Sheets[sheetName];
-  if (!ws) return [];
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "", blankrows: false });
-  return aoa.map((row) => row.map((v) => (v == null ? "" : String(v))));
+  return sheetToAoa(XLSX, workbook.Sheets[sheetName], false).rows;
 }
 
 function width(rows) {
@@ -148,13 +190,7 @@ export const MAX_ROWS = 10000;
 // Как sheetToRows, но пустые строки сохраняются, чтобы знать настоящий номер строки в Excel:
 // { rows, firstRow } - rows[i] лежит на строке Excel firstRow + i (нумерация с 1).
 export function sheetToGrid(XLSX, workbook, sheetName) {
-  const ws = workbook.Sheets[sheetName];
-  if (!ws || !ws["!ref"]) return { rows: [], firstRow: 1 };
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "", blankrows: true });
-  return {
-    rows: aoa.map((row) => row.map((v) => (v == null ? "" : String(v)))),
-    firstRow: XLSX.utils.decode_range(ws["!ref"]).s.r + 1,
-  };
+  return sheetToAoa(XLSX, workbook.Sheets[sheetName], true);
 }
 
 const isBlankRow = (row) => row.every((v) => String(v).trim() === "");

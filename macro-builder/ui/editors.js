@@ -323,12 +323,25 @@ function conditionBody(step, api) {
 
 // ---------- прочие шаги ----------
 
+// Прогресс по таблице: галочка, сколько записей уже обработано и сброс
+function progressBlock(step, api) {
+  const on = checkbox("Запоминать обработанные записи и продолжать с места остановки", step.resume, (v) => { step.resume = v; api.save(); api.rerender(); }, { tip: "Следующий запуск с этой же таблицей пропустит уже обработанные записи, даже если таблицу поправили" });
+  if (!step.resume) return [on, h("div", { class: "muted" }, "Прогресс не запоминается: каждый запуск идёт с первой записи")];
+  const line = h("div", { class: "result-line none", "data-role": "progress-status" }, "…");
+  const reset = button("Сбросить прогресс", { kind: "small", tip: "Забыть обработанные записи: следующий запуск начнётся с первой" });
+  reset.dataset.role = "reset-progress";
+  reset.disabled = true;
+  api.bindProgress(step, line, reset);
+  return [on, line, h("div", {}, reset)];
+}
+
 function loopListBody(step, api) {
   return [
     section(
       "Источник",
       field("Повторять для каждой записи из", textInput({ value: step.sourceKey, mono: true, list: "dl-lists", placeholder: "rows", onInput: (v) => { step.sourceKey = v.trim(); api.save(); } }), { tip: "Таблица или список: из шага «Данные из Excel/CSV», параметра запуска и т. д." })
     ),
+    section("Продолжение работы", progressBlock(step, api)),
     section(
       "Ошибки",
       field(
@@ -344,12 +357,7 @@ function loopListBody(step, api) {
       step,
       api,
       field("Обработать не больше записей", bind(step, "limit", api, { type: "number", min: 0 }), { tip: "0 — все. Удобно для пробного прогона" }),
-      field("Имя переменной записи", bind(step, "itemVar", api, { mono: true, placeholder: "item" })),
-      checks(
-        "Продолжение",
-        checkbox("продолжать с места остановки при следующем запуске", step.resume, (v) => { step.resume = v; api.save(); api.rerender(); }, { tip: "Если запуск прервали, следующий начнётся с необработанной записи" }),
-        step.resume ? button("Сбросить прогресс", { onClick: async () => { await api.resetProgress(step); api.toast("Прогресс сброшен", "ok"); } }) : null
-      )
+      field("Имя переменной записи", bind(step, "itemVar", api, { mono: true, placeholder: "item" }))
     ),
   ];
 }

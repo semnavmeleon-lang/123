@@ -13,6 +13,7 @@ import {
   MAX_VALUES,
   MAX_ROWS,
   sheetToGrid,
+  cellText,
   gridNonBlankRows,
   extractRows,
 } from "../excel-import.js";
@@ -270,4 +271,44 @@ test("extractRows: правило привязано к столбцу по им
   const ghost = extractRows(grid, { columns: cols, lengthRules: [{ col: "nope", op: "gt", n: 0 }] });
   assert.equal(ghost.rows.length, 3);
   assert.equal(ghost.skipped, 0);
+});
+
+test("cellText: длинные целые числа в общем формате - все цифры, форматированные - как показано", () => {
+  assert.equal(cellText(undefined), "");
+  assert.equal(cellText({ t: "s", v: "Иванов", w: "Иванов" }), "Иванов");
+  // 12+ цифр Excel показывает как 8,9E+11, а на сайт нужны все цифры
+  assert.equal(cellText({ t: "n", v: 890123456789, w: "8.90123E+11" }), "890123456789");
+  assert.equal(cellText({ t: "n", v: 890123456789, w: "8.90123E+11", z: "General" }), "890123456789");
+  // формат ячейки задан явно (в том числе научный) - остаётся как показано
+  assert.equal(cellText({ t: "n", v: 890123456789, w: "8.90E+11", z: "0.00E+00" }), "8.90E+11");
+  assert.equal(cellText({ t: "n", v: 1.5, w: "1.5" }), "1.5");
+  assert.equal(cellText({ t: "n", v: 45000, w: "15.03.2023", z: "dd.mm.yyyy" }), "15.03.2023");
+  assert.equal(cellText({ t: "n", v: 45000, z: "dd.mm.yyyy" }, XLSX), "15.03.2023", "текст даты без .w собирается по формату");
+  assert.equal(cellText({ t: "n", v: 7, w: "0007", z: "0000" }), "0007");
+  assert.equal(cellText({ t: "b", v: true, w: "TRUE" }), "TRUE");
+});
+
+test("xlsx: 12-значное число и телефон без экспоненты, число с нулями и дата как в Excel, столбцы считаются от A", () => {
+  const ws = XLSX.utils.aoa_to_sheet([["Номер", "Тел", "Код", "Дата"], [890123456789, 79054194015, 7, 45000]]);
+  ws["C2"].z = "0000";
+  ws["C2"].w = undefined;
+  ws["D2"].z = "dd.mm.yyyy";
+  ws["D2"].w = undefined;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Лист1");
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx", cellDates: false });
+  const book = readWorkbook(XLSX, out instanceof ArrayBuffer ? out : new Uint8Array(out).buffer, "n.xlsx");
+  const rows = sheetToRows(XLSX, book, book.SheetNames[0]);
+  assert.deepEqual(rows[1].slice(0, 2), ["890123456789", "79054194015"]);
+  assert.equal(rows[1][2], "0007");
+  assert.equal(rows[1][3], "15.03.2023");
+});
+
+test("xlsx: диапазон начинается не с A - буквы столбцов и номера строк всё равно настоящие", () => {
+  const ws = { "!ref": "B3:C4", B3: { t: "s", v: "ФИО" }, C3: { t: "s", v: "Тел" }, B4: { t: "s", v: "Иванов" }, C4: { t: "s", v: "1" } };
+  const wb = { SheetNames: ["s"], Sheets: { s: ws } };
+  const grid = sheetToGrid(XLSX, wb, "s");
+  assert.equal(grid.firstRow, 3);
+  assert.deepEqual(grid.rows, [["", "ФИО", "Тел"], ["", "Иванов", "1"]]);
+  assert.deepEqual(listColumns(sheetToRows(XLSX, wb, "s"), true).map((c) => c.letter + ":" + c.header), ["A:", "B:ФИО", "C:Тел"]);
 });

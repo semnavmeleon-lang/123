@@ -245,6 +245,67 @@ export function listSignature(list) {
   return `${list.length}:${h.toString(16)}`;
 }
 
+// ---------------- прогресс по записям ----------------
+// Обработанные записи помнятся по содержимому (а не по номеру строки), поэтому прогресс переживает правку
+// таблицы: удалили или добавили строки, поменяли порядок - уже сделанные записи всё равно пропускаются.
+
+// 53-битный хеш строки (cyrb53): для тысяч записей случайные совпадения практически исключены
+function hash53(str) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// Ключ записи: значения полей без служебных (_row и т. п.), пробелы по краям не важны
+export function rowKey(item) {
+  if (item !== null && typeof item === "object") {
+    return hash53(JSON.stringify(Object.keys(item).filter((k) => !k.startsWith("_")).sort().map((k) => [k, String(item[k] ?? "").trim()])));
+  }
+  return hash53(String(item ?? "").trim());
+}
+
+// entry - сохранённый прогресс { keys: [...], total, at, last } (старый формат { sig, done } тоже понимается).
+// Возвращает { skip: [bool по записям], done, foreign, next }: сколько записей списка уже обработано, сколько сохранённых
+// записей в списке не нашлось (таблицу поменяли) и с какой по счёту записи (с 1) пойдёт работа.
+export function planResume(list, entry) {
+  const skip = list.map(() => false);
+  let keys = [];
+  if (entry && Array.isArray(entry.keys)) keys = entry.keys;
+  else if (entry && entry.sig && entry.sig === listSignature(list) && entry.done > 0) keys = list.slice(0, entry.done).map(rowKey);
+  const left = new Map();
+  for (const k of keys) left.set(k, (left.get(k) || 0) + 1);
+  let done = 0;
+  list.forEach((item, i) => {
+    const k = rowKey(item);
+    const n = left.get(k) || 0;
+    if (n > 0) {
+      left.set(k, n - 1);
+      skip[i] = true;
+      done++;
+    }
+  });
+  const first = skip.indexOf(false);
+  return { skip, done, foreign: keys.length - done, next: first === -1 ? list.length + 1 : first + 1 };
+}
+
+// Сводка для интерфейса. list - текущий список записей, если он известен (иначе берётся то, что запомнено в прогрессе).
+export function progressSummary(entry, list) {
+  if (!entry) return null;
+  const doneSaved = Array.isArray(entry.keys) ? entry.keys.length : Number(entry.done) || 0;
+  if (Array.isArray(list)) {
+    const p = planResume(list, entry);
+    return { done: p.done, total: list.length, foreign: p.foreign, next: p.next, at: entry.at || 0, last: entry.last || "" };
+  }
+  return { done: doneSaved, total: Number(entry.total) || 0, foreign: 0, next: doneSaved + 1, at: entry.at || 0, last: entry.last || "" };
+}
+
 // ---------------- имена переменных из заголовков таблицы ----------------
 
 const TRANSLIT = {

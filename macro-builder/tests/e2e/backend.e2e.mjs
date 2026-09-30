@@ -33,7 +33,7 @@ function checkerMacro(name, loopOver = {}, reportOver = {}) {
     steps: [
       st("loadExcel", { mode: "rows", varName: "rows", rows: ROWS, columns: [{ index: 0, varName: "fio" }] }),
       st("loopList", {
-        sourceKey: "rows", itemVar: "item", onRowError: "continue", ...loopOver,
+        sourceKey: "rows", itemVar: "item", onRowError: "continue", resume: false, ...loopOver,
         steps: [
           st("navigate", { url: base }),
           st("type", { selector: "#q", value: "${fio}" }),
@@ -70,8 +70,8 @@ const ctx = await chromium.launchPersistentContext(path.join(TMP, "profile"), {
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
 });
 
-async function runMacro(b, macro, trialLimit = 0) {
-  return b.evaluate(async ([macro, trialLimit]) => {
+async function runMacro(b, macro, trialLimit = 0, restartProgress = false) {
+  return b.evaluate(async ([macro, trialLimit, restartProgress]) => {
     await chrome.storage.local.set({ mb_macros: [macro] });
     const runId = "t" + Math.random();
     const logs = [];
@@ -85,9 +85,9 @@ async function runMacro(b, macro, trialLimit = 0) {
         if (msg.type === "mb-run-error") { chrome.runtime.onMessage.removeListener(fn); resolve({ ok: false, error: msg.message, logs, progress }); }
       };
       chrome.runtime.onMessage.addListener(fn);
-      chrome.runtime.sendMessage({ action: "runMacro", macro, inputValues: {}, runId, tabId: null, trialLimit });
+      chrome.runtime.sendMessage({ action: "runMacro", macro, inputValues: {}, runId, tabId: null, trialLimit, restartProgress });
     });
-  }, [macro, trialLimit]);
+  }, [macro, trialLimit, restartProgress]);
 }
 const storage = (b, key) => b.evaluate(async (k) => (await chrome.storage.local.get(k))[k], key);
 
@@ -141,7 +141,8 @@ try {
   assert.match(rep1, /Тишин/); assert.match(rep1, /Шапарь/); assert.doesNotMatch(rep1, /Несуществующий/);
   const prog = await storage(b, "mb_progress");
   console.log("прогресс после 1-го запуска:", JSON.stringify(prog));
-  assert.equal(Object.values(prog)[0].done, 2);
+  assert.equal(Object.values(prog)[0].keys.length, 2, "запомнены две обработанные записи");
+  assert.equal(Object.values(prog)[0].total, 4);
   r = await runMacro(b, resumeMacro());
   console.log(r.logs.filter((l) => /продолжаю|лимит/.test(l)).join("\n"));
   assert.ok(r.logs.some((l) => /продолжаю с записи 3 из 4/.test(l)));
@@ -166,6 +167,89 @@ try {
   assert.equal(r.ok, true, r.error);
   assert.equal(r.progress.length, 4, "прогресс для каждой из 4 записей");
   assert.ok(!r.logs.some((l) => /продолжаю/.test(l)));
+
+  // ---------- 2e. прогресс по таблице ----------
+  console.log("== 2e. прогресс: продолжение после правки таблицы, дозапись отчёта, «начать сначала»");
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports", "mb_progress"]));
+  const PR = (fio, row) => ({ fio, polis: "P-" + fio, _row: row }); // номер строки меняется при правке таблицы, содержимое записи - нет
+  const progMacro = (rows, loopOver = {}) => ({
+    id: "m_prog", name: "prog", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [
+      st("loadExcel", { id: "s_load", mode: "rows", varName: "rows", rows, columns: [{ index: 0, varName: "fio" }] }),
+      st("loopList", {
+        id: "s_loop", sourceKey: "rows", resume: true, ...loopOver,
+        steps: [st("appendReport", { filename: "e2e-prog.md", header: "# Прогресс\n", template: "row ${_row}: ${fio}\n" })],
+      }),
+    ],
+  });
+  const progText = async () => (await storage(b, "mb_reports"))["e2e-prog.md"].text;
+  const T1 = ["Аня", "Борис", "Вика", "Глеб", "Дима"].map((n, i) => PR(n, i + 2));
+  r = await runMacro(b, progMacro(T1, { limit: 2 }));
+  assert.equal(r.ok, true, r.error);
+  let pe = Object.values((await storage(b, "mb_progress")) || {})[0];
+  assert.equal(pe.keys.length, 2);
+  assert.equal(pe.total, 5);
+  assert.equal(pe.last, "Борис", "запомнена подпись последней записи");
+  assert.equal(await progText(), "# Прогресс\nrow 2: Аня\nrow 3: Борис\n");
+  // таблицу поправили: Бориса удалили, сверху вставили Еву, номера строк сместились - Аня всё равно считается обработанной
+  const T2 = [PR("Ева", 2), PR("Аня", 3), PR("Вика", 4), PR("Глеб", 5), PR("Дима", 6)];
+  r = await runMacro(b, progMacro(T2));
+  assert.equal(r.ok, true, r.error);
+  console.log(r.logs.filter((l) => /продолжаю|прогресс/.test(l)).join("\n"));
+  assert.ok(r.logs.some((l) => /продолжаю с записи 1 из 5: уже обработано 1, ещё 1 из сохранённых в таблице не найдено/.test(l)));
+  const fin = await progText();
+  assert.equal(fin, "# Прогресс\nrow 2: Аня\nrow 3: Борис\nrow 2: Ева\nrow 4: Вика\nrow 5: Глеб\nrow 6: Дима\n", "отчёт дописан к прошлому (не начат заново), Аня не повторилась");
+  assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), [], "таблица пройдена - прогресс очищен");
+  // «Начать сначала»: сохранённое сбрасывается, отчёт начинается заново
+  r = await runMacro(b, progMacro(T1, { limit: 2 }));
+  assert.equal(r.ok, true, r.error);
+  assert.equal(Object.values((await storage(b, "mb_progress")) || {})[0].keys.length, 2);
+  r = await runMacro(b, progMacro(T1, { limit: 2 }), 0, true);
+  assert.equal(r.ok, true, r.error);
+  assert.ok(r.logs.some((l) => /прогресс сброшен, начинаю с первой записи/.test(l)));
+  assert.ok(!r.logs.some((l) => /продолжаю/.test(l)));
+  assert.equal(await progText(), "# Прогресс\nrow 2: Аня\nrow 3: Борис\n", "отчёт начат заново");
+  assert.equal(Object.values((await storage(b, "mb_progress")) || {})[0].keys.length, 2, "после сброса записаны заново первые две");
+  // всё уже обработано (прошлый запуск прервали на последней записи): понятное предупреждение и очистка
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports", "mb_progress"]));
+  r = await runMacro(b, progMacro(T1, { limit: 5 }));
+  assert.equal(Object.keys((await storage(b, "mb_progress")) || {}).length, 0, "дошёл до конца - прогресс очищен");
+  const { rowKey } = await import(path.join(EXT, "logic.js"));
+  const allKeys = T1.map(rowKey);
+  await b.evaluate(async (keys) => chrome.storage.local.set({ mb_progress: { "m_prog:s_loop": { v: 2, keys, total: 5, at: 1, last: "Дима" } } }), allKeys);
+  r = await runMacro(b, progMacro(T1));
+  assert.equal(r.ok, true, r.error);
+  assert.ok(r.logs.some((l) => /warn .*все 5 записей уже обработаны/.test(l)), "предупреждение, что делать нечего");
+  assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), []);
+
+  // ---------- 2f. значения из таблицы: понятные ошибки вместо тихого пустого ввода ----------
+  console.log("== 2f. незаданная переменная, пустая ячейка, целая строка вместо текста, цикл без списка");
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports", "mb_progress"]));
+  const table = (rows) => st("loadExcel", { mode: "rows", varName: "rows", rows, columns: [{ index: 0, varName: "fio" }] });
+  const varMacro = (...steps) => ({ id: "m_var", name: "var", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [], steps: [st("navigate", { url: base }), ...steps] });
+  const typeFio = () => st("type", { selector: "#q", value: "${fio}", timeoutMs: 1500 });
+  r = await runMacro(b, varMacro(table(ROWS.slice(0, 2)), typeFio())); // столбец таблицы вне цикла
+  assert.equal(r.ok, false);
+  assert.match(r.error, /^Не задана переменная \$\{fio\}.*только внутри шага «Для каждой записи»/);
+  r = await runMacro(b, varMacro(table(ROWS.slice(0, 2)), st("loopList", { sourceKey: "rows", resume: false, steps: [
+    typeFio(),
+    st("extract", { selector: "#q", attr: "value", varName: "v", timeoutMs: 1500 }),
+    st("appendReport", { filename: "e2e-vars.md", header: "", template: "${fio}=>${v}" }),
+  ] })));
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await storage(b, "mb_reports"))["e2e-vars.md"].text, "Тишин Юрий Романович=>Тишин Юрий Романович\nШапарь Елена Ивановна=>Шапарь Елена Ивановна\n", "значение каждой строки вводится в поле");
+  r = await runMacro(b, varMacro(table([{ fio: "", policy: "1", _row: 2 }]), st("loopList", { sourceKey: "rows", resume: false, steps: [typeFio()] })));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Нечего вводить: значение \$\{fio\} пустое/, "пустая ячейка - ошибка, а не ввод пустоты");
+  r = await runMacro(b, varMacro(table(ROWS.slice(0, 2)), st("loopList", { sourceKey: "rows", resume: false, steps: [st("type", { selector: "#q", value: "${item}", timeoutMs: 1500 })] })));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /«\$\{item\}» - это целая строка таблицы.*например \$\{fio\}/);
+  r = await runMacro(b, varMacro(table(ROWS.slice(0, 2)), st("loopList", { sourceKey: "нет_такого", steps: [st("wait", { ms: 10 })] })));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Не найден список «нет_такого».*сейчас есть: rows/);
+  r = await runMacro(b, varMacro(st("navigate", { url: base + "?q=${nope}" })));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Не задана переменная \$\{nope\}/, "и в адресе страницы");
 
   // ---------- 2c. очистка поля ----------
   console.log("== 2c. «Очистить поле»: стирает текст, обычный «Ввести текст» без очистки дописывает");

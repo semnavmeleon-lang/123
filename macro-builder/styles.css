@@ -205,6 +205,8 @@ input[type=file] { font: inherit; }
 .result-line { padding: 6px 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ok); font-weight: 600; }
 .result-line.warn { color: var(--warn); background: var(--warn-bg); border-color: #e8cf94; }
 .result-line.none { color: var(--muted); font-weight: 400; }
+.scope-warn { padding: 6px 10px; margin-bottom: 10px; border: 1px solid #e8cf94; background: var(--warn-bg); color: var(--warn); white-space: pre-line; }
+.scope-warn[hidden] { display: none; }
 .rules { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .rule { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rule select, .rule input { width: auto; }

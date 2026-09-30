@@ -6,6 +6,22 @@ export const STORAGE_KEY = "mb_macros";
 // Накопленные MD-отчёты { имяФайла: { text, updatedAt } } и прогресс циклов { "макрос:шаг": { sig, done } }
 export const REPORTS_KEY = "mb_reports";
 export const PROGRESS_KEY = "mb_progress";
+// Прогресс цикла по записям хранится под ключом «макрос:шаг»
+export const progressKey = (macroId, stepId) => `${macroId}:${stepId}`;
+
+export async function loadProgressAll() {
+  const data = await chrome.storage.local.get(PROGRESS_KEY);
+  return data[PROGRESS_KEY] || {};
+}
+
+// Сбросить прогресс: одного шага (stepId) или всех циклов макроса
+export async function resetProgress(macroId, stepId) {
+  const all = await loadProgressAll();
+  for (const k of Object.keys(all)) {
+    if (stepId ? k === progressKey(macroId, stepId) : k.startsWith(macroId + ":")) delete all[k];
+  }
+  await chrome.storage.local.set({ [PROGRESS_KEY]: all });
+}
 
 export function uid(prefix = "s") {
   return prefix + "_" + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -41,6 +57,35 @@ export function substitute(str, vars) {
     if (key in BUILTIN_VARS) return BUILTIN_VARS[key]();
     return "";
   });
+}
+
+// Проблемные ${переменные} в строке: не заданные (в vars их нет) и «целые строки таблицы» (объект вместо текста).
+// Пустое значение (пустая ячейка) проблемой не считается - об этом отдельная проверка у шага «Ввести текст».
+export function problemVars(str, vars) {
+  const out = [];
+  if (typeof str !== "string" || !vars) return out;
+  for (const m of str.matchAll(/\$\{([a-zA-Z_]\w*)\}/g)) {
+    const name = m[1];
+    if (out.some((p) => p.name === name)) continue;
+    if (!(name in vars)) {
+      if (!(name in BUILTIN_VARS)) out.push({ name, kind: "missing" });
+    } else if (vars[name] !== null && typeof vars[name] === "object" && !Array.isArray(vars[name])) {
+      const firstKey = Object.keys(vars[name]).find((k) => !k.startsWith("_"));
+      out.push({ name, kind: "row", hint: firstKey });
+    }
+  }
+  return out;
+}
+
+// Понятный текст ошибки для problemVars
+export function describeVarProblems(problems) {
+  return problems
+    .map((p) =>
+      p.kind === "row"
+        ? `«\${${p.name}}» - это целая строка таблицы, а не текст: выберите в списке значений нужный столбец${p.hint ? ` (например \${${p.hint}})` : ""}`
+        : `не задана переменная \${${p.name}}: столбцы таблицы доступны только внутри шага «Для каждой записи» по этой таблице, остальные переменные - только после шага, который их задаёт`
+    )
+    .join("; ");
 }
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -211,7 +256,7 @@ export function defaultStep(type) {
         id, type, sourceKey: "", itemVar: "item", steps: [],
         // limit - обработать не больше N строк (0 = все); resume - помнить прогресс и продолжать с места остановки;
         // onRowError "continue" - ошибка в строке не останавливает цикл, выполняются catchSteps и идём дальше
-        limit: 0, resume: false, onRowError: "stop", catchSteps: [],
+        limit: 0, resume: true, onRowError: "stop", catchSteps: [],
       };
       break;
     case "customJs":

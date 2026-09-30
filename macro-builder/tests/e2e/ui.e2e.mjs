@@ -167,6 +167,82 @@ try {
   assert.equal(fs.readFileSync(path.join(TMP, "dl.md"), "utf8"), rep);
   await b.keyboard.press("Escape");
 
+  // ---------- 6b. прогресс по таблице ----------
+  console.log("== 6b. прогресс: статус в цикле, продолжить / начать сначала при запуске, сброс, popup");
+  await b.waitForTimeout(600);
+  const macroNow = (await macros(b))[0];
+  const loopStep = macroNow.steps.find((s) => s.type === "loopList");
+  const tableRows = macroNow.steps.find((s) => s.type === "loadExcel").rows;
+  assert.equal(loopStep.resume, true, "у нового цикла прогресс запоминается по умолчанию");
+  const saveProgress = (n) => b.evaluate(async ({ mid, sid, rows, n }) => {
+    const { rowKey } = await import("./logic.js");
+    const entry = { v: 2, keys: rows.slice(0, n).map(rowKey), total: rows.length, at: Date.now(), last: rows[0].fio };
+    await chrome.storage.local.set({ mb_progress: n ? { [`${mid}:${sid}`]: entry } : {} });
+  }, { mid: macroNow.id, sid: loopStep.id, rows: tableRows, n });
+  const finished = () => b.waitForFunction(() => /Готово|Ошибка/.test(document.querySelector('[data-role="drawer"] .drawer-title')?.textContent || ""), null, { timeout: 20000 });
+  const reportRows = async () => (await storage(b, "mb_reports"))["report.md"].text.split("\n").filter((l) => l.startsWith("row"));
+  await row("loopList").click();
+  const pstatus = insp.locator('[data-role="progress-status"]');
+  assert.match(await pstatus.innerText(), /Сохранённого прогресса нет/);
+  assert.equal(await insp.locator('[data-role="reset-progress"]').isDisabled(), true, "сбрасывать пока нечего");
+  await saveProgress(1);
+  await b.waitForFunction(() => /Обработано 1 из 2/.test(document.querySelector('[data-role="progress-status"]')?.textContent || ""));
+  assert.match(await pstatus.innerText(), /Обработано 1 из 2 · следующая запись - 2/);
+  assert.equal(await insp.locator('[data-role="reset-progress"]').isDisabled(), false);
+  // запуск: по умолчанию продолжается с необработанной записи
+  await b.locator('[data-role="run"]').click();
+  const runProg = b.locator('[data-role="run-progress"]');
+  assert.match(await runProg.innerText(), /Продолжить с записи 2/);
+  assert.match(await runProg.innerText(), /Обработано 1 из 2/);
+  await b.locator(".modal .check input[type=checkbox]").check(); // пробный прогон прогресс не трогает - блок прячется
+  assert.equal(await runProg.isHidden(), true);
+  await b.locator(".modal .check input[type=checkbox]").uncheck();
+  await seg(b.locator(".modal"), "В новой вкладке").click();
+  await b.evaluate(() => chrome.storage.local.remove("mb_reports"));
+  await b.locator('[data-role="run-confirm"]').click();
+  await finished();
+  assert.deepEqual(await reportRows(), ["row 5: Пятый Пётр / 25470CFI4440007777 / 89181234567"], "обработана только вторая запись");
+  assert.match(await pstatus.innerText(), /Сохранённого прогресса нет/, "таблица пройдена - прогресс очищен, статус обновился сам");
+  // запуск: начать сначала
+  await saveProgress(1);
+  await b.locator('[data-role="run"]').click();
+  await seg(b.locator('[data-role="run-progress"]'), "Начать сначала").click();
+  assert.match(await b.locator('[data-role="run-progress"]').innerText(), /прогресс будет сброшен/);
+  await seg(b.locator(".modal"), "В новой вкладке").click();
+  await b.evaluate(() => chrome.storage.local.remove("mb_reports"));
+  await b.locator('[data-role="run-confirm"]').click();
+  await finished();
+  assert.equal((await reportRows()).length, 2, "после «Начать сначала» обработаны обе записи");
+  // сброс кнопкой в цикле
+  await saveProgress(1);
+  await b.waitForFunction(() => /Обработано 1 из 2/.test(document.querySelector('[data-role="progress-status"]')?.textContent || ""));
+  await insp.locator('[data-role="reset-progress"]').click();
+  await b.waitForFunction(() => /Сохранённого прогресса нет/.test(document.querySelector('[data-role="progress-status"]')?.textContent || ""));
+  assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), []);
+  // таблицу поменяли: сохранённое не относится к ней, продолжать нечего
+  await saveProgress(1);
+  await b.evaluate(async (mid) => {
+    const all = (await chrome.storage.local.get("mb_progress")).mb_progress;
+    const k = Object.keys(all)[0];
+    all[k].keys = ["чужой-ключ"];
+    await chrome.storage.local.set({ mb_progress: all });
+  }, macroNow.id);
+  await b.waitForFunction(() => /не относится к этой таблице/.test(document.querySelector('[data-role="progress-status"]')?.textContent || ""));
+  await b.locator('[data-role="run"]').click();
+  assert.equal(await b.locator('[data-role="run-progress"]').isHidden(), true, "продолжать нечего - выбора нет");
+  await b.locator(".modal button", { hasText: "Отмена" }).click();
+  // popup: прогресс и сброс
+  await saveProgress(1);
+  const popPage = await ctx.newPage();
+  await popPage.goto(`chrome-extension://${extId}/popup.html`);
+  await popPage.waitForSelector('[data-role="pop-progress"]');
+  assert.match(await popPage.locator('[data-role="pop-progress"]').innerText(), /Обработано 1 из 2, продолжу с записи 2/);
+  await popPage.getByRole("button", { name: "Сбросить прогресс" }).click();
+  await popPage.waitForFunction(() => !document.querySelector('[data-role="pop-progress"]'));
+  assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), []);
+  await popPage.close();
+  await b.bringToFront();
+
   // ---------- 7. значение из таблицы в шаге «Ввести текст» ----------
   console.log("== 7. «Ввести текст»: значение выбирается из списка столбцов таблицы");
   await b.locator('[data-branch="each"] > [data-role="add-step"]').click();
@@ -281,6 +357,31 @@ try {
   assert.ok(marked.some((t) => /\[НЕ ПОЛЕ ВВОДА\]/.test(t)), "не-поле помечено в подписи");
   await b.bringToFront();
 
+  // ---------- 8c. «Проверить шаг» и предупреждения о переменных ----------
+  console.log("== 8c. «Проверить шаг» подставляет первую запись таблицы; столбец вне цикла - предупреждение");
+  await b.bringToFront();
+  await row("type").first().click(); // шаг внутри цикла: «Иванов ${polis}» в #q
+  await page.fill("#q", "");
+  await insp.getByRole("button", { name: "Проверить шаг" }).click();
+  await b.waitForFunction(() => /Готово|Ошибка/.test(document.querySelector('[data-role="drawer"] .drawer-title')?.textContent || ""), null, { timeout: 20000 });
+  assert.match(await b.locator('[data-role="drawer"] .drawer-title').innerText(), /Готово/);
+  assert.equal(await page.inputValue("#q"), "Иванов 25470CFI4440002174", "подставилась первая запись таблицы, а не пустота");
+  assert.match(await b.locator('[data-role="log"]').innerText(), /Значения для проверки шага - первая запись таблицы: polis = «25470CFI4440002174»; fio = «Тишин Юрий Романович»/);
+  await addTop();
+  await b.locator('[data-add="type"]').click();
+  await insp.locator('[data-role="value-source"]').first().selectOption("${fio}");
+  await insp.locator('[data-role="pick"] input').fill("#q");
+  await b.waitForTimeout(400);
+  assert.equal(await row("type").last().locator(".tr-warn").innerText(), "Нет данных", "столбец таблицы вне цикла помечен в структуре");
+  assert.match(await insp.locator('[data-role="scope-warn"]').innerText(), /\$\{fio\} - столбец таблицы.*только внутри шага «Для каждой записи»/);
+  assert.match(await b.locator('[data-role="status"]').innerText(), /Замечаний: 1/);
+  await page.fill("#q", "");
+  await insp.getByRole("button", { name: "Проверить шаг" }).click();
+  await b.waitForFunction(() => /Готово|Ошибка/.test(document.querySelector('[data-role="drawer"] .drawer-title')?.textContent || ""), null, { timeout: 20000 });
+  assert.equal(await page.inputValue("#q"), "Тишин Юрий Романович", "«Проверить шаг» вне цикла тоже берёт первую запись");
+  await insp.getByRole("button", { name: "Удалить" }).click();
+  assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
+
   // ---------- 9. условия ----------
   console.log("== 9. условие: проверки, предупреждения, переход к проблемному шагу");
   await b.bringToFront();
@@ -301,7 +402,9 @@ try {
   const detail = await row("condition").locator(".tr-detail").first().innerText();
   console.log("описание:", detail);
   assert.match(detail, /\.result есть на странице ИЛИ \$\{fio\} длина > 10/);
-  assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
+  // всё заполнено, но столбец таблицы стоит вне цикла - об этом честно предупреждает конструктор
+  assert.match(await b.locator('[data-role="status"]').innerText(), /Замечаний: 1/);
+  assert.equal(await row("condition").first().locator(".tr-warn").innerText(), "Нет данных");
   await tests.nth(0).locator("select").nth(1).selectOption("yes"); // kind, «есть/нет», тип селектора
   assert.match(await row("condition").locator(".tr-detail").first().innerText(), /\.result нет на странице/);
   // предупреждение: шаг без селектора, клик по статусу выбирает его
@@ -413,6 +516,7 @@ try {
   }
   await b.locator('[data-role="steps"] > [data-role="add-step"]').click();
   screens.push(await b.locator(".popover").innerText());
+  await b.waitForTimeout(150); // обработчик Escape у всплывающего окна подключается на следующем такте
   await b.keyboard.press("Escape");
   await b.locator('[data-role="settings-row"]').click();
   screens.push(await b.locator("body").innerText());

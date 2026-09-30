@@ -105,6 +105,7 @@ test("validateStep: условие - селектор и значение для
 
 test("validateMacro: обходит вложенные шаги и указывает путь", () => {
   const macro = {
+    inputs: [{ key: "rows", multiline: true }],
     steps: [
       st("navigate", { url: "https://a.ru" }),
       st("loopList", {
@@ -136,7 +137,7 @@ test("collectVars: все переменные и отдельно списки 
   assert.deepEqual([...v.lists].sort(), ["all_names", "phones", "rows"]);
 });
 
-import { collectValueSources } from "../ui/meta.js";
+import { collectValueSources, scopeIssues, buildSampleVars, describeSampleVars } from "../ui/meta.js";
 
 test("collectValueSources: столбцы таблицы с заголовками идут первыми, дальше цикл, переменные, служебные", () => {
   const macro = {
@@ -147,14 +148,14 @@ test("collectValueSources: столбцы таблицы с заголовкам
     ],
   };
   const groups = collectValueSources(macro);
-  assert.deepEqual(groups.map((g) => g.label), ["Столбцы таблицы", "Цикл", "Другие переменные", "Служебные"]);
+  // цикл по строкам таблицы: «текущая запись» - целая строка, в списке значений её нет, есть только столбцы
+  assert.deepEqual(groups.map((g) => g.label), ["Столбцы таблицы", "Другие переменные", "Служебные"]);
   assert.deepEqual(groups[0].items, [
     { value: "${fio}", label: "ФИО  (fio)" },
     { value: "${polis}", label: "Номер полиса  (polis)" },
   ]);
-  assert.deepEqual(groups[1].items.map((i) => i.value), ["${item}"]);
-  assert.deepEqual(groups[2].items.map((i) => i.value), ["${phones}", "${holder}", "${verdict}"]);
-  assert.ok(groups[3].items.some((i) => i.value === "${_row}"));
+  assert.deepEqual(groups[1].items.map((i) => i.value), ["${phones}", "${holder}", "${verdict}"]);
+  assert.ok(groups[2].items.some((i) => i.value === "${_row}"));
   // повторов нет, у каждого значения формат ${имя}
   const all = groups.flatMap((g) => g.items.map((i) => i.value));
   assert.equal(new Set(all).size, all.length);
@@ -167,4 +168,85 @@ test("collectValueSources: без таблицы нет группы «Стол�
   assert.equal(g[0].items[0].label, "col1");
   // режим «один столбец» столбцов-переменных не даёт
   assert.equal(collectValueSources({ steps: [st("loadExcel", { mode: "column" })] })[0].label, "Служебные");
+});
+
+test("collectValueSources: у цикла по одному столбцу есть «Текущая запись цикла»", () => {
+  const macro = {
+    steps: [
+      st("loadExcel", { mode: "column", varName: "list", values: ["a"] }),
+      st("loopList", { sourceKey: "list", itemVar: "item", steps: [] }),
+    ],
+  };
+  const groups = collectValueSources(macro);
+  assert.deepEqual(groups.map((g) => g.label), ["Цикл", "Служебные"]);
+  assert.deepEqual(groups[0].items.map((i) => i.value), ["${item}"]);
+});
+
+// ---------------- где доступны переменные ----------------
+
+const tableStep = () =>
+  st("loadExcel", { mode: "rows", varName: "rows", columns: [{ varName: "fio" }, { varName: "polis" }], rows: [{ fio: "Иванов И. И.", polis: "111", _row: 2 }, { fio: "Петров", polis: "222", _row: 3 }] });
+const typeFio = () => st("type", { selector: "#q", value: "${fio}" });
+
+test("scopeIssues: столбец таблицы вне цикла - предупреждение, внутри цикла - нет", () => {
+  const outside = { steps: [tableStep(), typeFio(), st("loopList", { sourceKey: "rows", steps: [typeFio()] })] };
+  const issues = scopeIssues(outside);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].path, "2");
+  assert.match(issues[0].message, /\$\{fio\}.*только внутри шага «Для каждой записи»/);
+  // validateMacro включает эти предупреждения
+  assert.ok(validateMacro(outside).some((i) => i.path === "2" && /fio/.test(i.message)));
+});
+
+test("scopeIssues: цикл по списку, которого нет выше, и незаданная переменная", () => {
+  const macro = { steps: [st("loopList", { sourceKey: "rows", steps: [st("click", { selector: ".x" })] }), tableStep()] };
+  const issues = scopeIssues(macro);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /Список «rows» не найден до этого шага/);
+  const unset = scopeIssues({ steps: [st("type", { selector: "#q", value: "${nothing}" })] });
+  assert.match(unset[0].message, /\$\{nothing\} здесь ещё не задана/);
+});
+
+test("scopeIssues: не ругается на допустимое (параметры, встроенные, setVar/extract выше, поля записи, ветки условий, catchSteps)", () => {
+  const macro = {
+    inputs: [{ key: "phones", multiline: true }, { key: "who" }],
+    steps: [
+      tableStep(),
+      st("setVar", { varName: "n", value: "1" }),
+      st("type", { selector: "#q", value: "${who} ${n} ${_date}" }),
+      st("loopList", {
+        sourceKey: "rows",
+        catchSteps: [st("appendReport", { template: "ошибка ${_error} ${fio}" })],
+        steps: [
+          st("extract", { selector: ".r", varName: "holder" }),
+          st("condition", { tests: [{ ...defaultTest("var"), left: "${holder}", right: "${fio}" }], then: [st("type", { selector: "#q", value: "${polis} ${_row} ${_index}" })], else: [] }),
+        ],
+      }),
+      st("loopList", { sourceKey: "phones", steps: [st("type", { selector: "#q", value: "${anything_from_list}" })] }),
+    ],
+  };
+  assert.deepEqual(scopeIssues(macro), []);
+});
+
+test("buildSampleVars: первая запись таблицы, значение столбца и параметры по умолчанию", () => {
+  const macro = {
+    inputs: [{ key: "who", default: "я" }],
+    steps: [
+      tableStep(),
+      st("loadExcel", { mode: "column", varName: "phones", values: ["79054194015", "79181658846"] }),
+      st("loopList", { sourceKey: "phones", itemVar: "phone", steps: [] }),
+    ],
+  };
+  const v = buildSampleVars(macro);
+  assert.equal(v.fio, "Иванов И. И.");
+  assert.equal(v.polis, "111");
+  assert.equal(v._row, 2);
+  assert.equal(v.phone, "79054194015");
+  assert.equal(v.who, "я");
+  assert.equal(v._index, 1);
+  assert.deepEqual(buildSampleVars({ steps: [] }), {});
+  // без цикла значение одного столбца доступно как item
+  assert.equal(buildSampleVars({ steps: [st("loadExcel", { mode: "column", varName: "l", values: ["x"] })] }).item, "x");
+  assert.match(describeSampleVars(macro), /fio = «Иванов И\. И\.»; polis = «111»; phones \(первое значение\) = «79054194015»/);
+  assert.equal(describeSampleVars({ steps: [] }), "");
 });

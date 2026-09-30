@@ -1,12 +1,13 @@
 // Всплывающее окно расширения: список макросов с запуском, статусом и прогрессом выполнения.
 
-import { loadMacros, uid } from "./common.js";
+import { loadMacros, uid, loadProgressAll, resetProgress, PROGRESS_KEY } from "./common.js";
 import { h, clear, button } from "./ui/dom.js";
-import { pluralRu } from "./ui/meta.js";
+import { pluralRu, resumableProgress } from "./ui/meta.js";
 
 const root = document.getElementById("root");
 
 let macros = [];
+let progress = {}; // сохранённый прогресс циклов по таблице
 let run = null; // { runId, macroId, progress?: {index,total,label} }
 const status = {}; // macroId -> { state: "ok" | "err" | "run", text }
 
@@ -17,6 +18,7 @@ function openBuilder(params) {
 
 async function refresh() {
   macros = await loadMacros();
+  progress = await loadProgressAll();
   render();
 }
 
@@ -32,17 +34,28 @@ function render() {
     const running = run && run.macroId === m.id;
     const n = (m.steps || []).length;
     const st = status[m.id];
+    const saved = resumableProgress(m, progress, m.id)[0];
     const sub = running
       ? h("div", { class: "pop-status run" }, run.progress ? `Запись ${run.progress.index} из ${run.progress.total}` : "Выполняется")
       : st
         ? h("div", { class: "pop-status " + st.state }, st.text)
-        : h("span", { class: "macro-sub" }, `${n} ${pluralRu(n, "шаг", "шага", "шагов")}`);
+        : saved
+          ? h("div", { class: "pop-status run", "data-role": "pop-progress" }, `Обработано ${saved.sum.done} из ${saved.sum.total || "?"}, продолжу с записи ${saved.sum.next}`)
+          : h("span", { class: "macro-sub" }, `${n} ${pluralRu(n, "шаг", "шага", "шагов")}`);
     const runBtn = button(running ? "Стоп" : "Запустить", { kind: running ? "danger small" : "primary small", onClick: () => (running ? stop() : onRun(m)) });
     runBtn.dataset.run = m.id;
     const item = h(
       "div",
       { class: "pop-item" + (running ? " running" : "") },
-      h("div", { class: "macro-txt" }, h("span", { class: "macro-name", title: m.name }, m.name || "Без имени"), sub),
+      h(
+        "div",
+        { class: "macro-txt" },
+        h("span", { class: "macro-name", title: m.name }, m.name || "Без имени"),
+        sub,
+        !running && saved
+          ? button("Сбросить прогресс", { kind: "small", tip: "Забыть обработанные записи: запуск начнётся с первой", onClick: async () => { await resetProgress(m.id); await refresh(); } })
+          : null
+      ),
       runBtn,
       button("Изменить", { kind: "small", onClick: () => openBuilder("?m=" + m.id) })
     );
@@ -84,6 +97,10 @@ function start(macro, inputValues) {
 function stop() {
   if (run) chrome.runtime.sendMessage({ action: "stopRun", runId: run.runId });
 }
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[PROGRESS_KEY]) refresh();
+});
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!run || !msg || msg.runId !== run.runId) return;

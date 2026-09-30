@@ -1,10 +1,10 @@
 // Конструктор макросов. Три зоны: список макросов (слева), структура макроса - дерево шагов (центр)
 // и свойства выбранного шага или макроса (справа). Внизу - панель хода выполнения.
 
-import { loadMacros, saveMacros, newMacro, uid, defaultStep, newTrigger, TRIGGER_LABELS, REPORTS_KEY, PROGRESS_KEY, substitute } from "./common.js";
-import { buildConfig, parseImport, mergeConfig, importAsCopies } from "./logic.js";
+import { loadMacros, saveMacros, newMacro, uid, defaultStep, newTrigger, TRIGGER_LABELS, REPORTS_KEY, PROGRESS_KEY, progressKey, loadProgressAll, resetProgress, substitute } from "./common.js";
+import { buildConfig, parseImport, mergeConfig, importAsCopies, progressSummary } from "./logic.js";
 import { h, clear, textInput, checkbox, segmented, button, iconButton, popover, menuList, modal, confirmDialog, toast, downloadText } from "./ui/dom.js";
-import { STEP_META, PALETTE, CATEGORIES, stepTitle, describeStep, validateStep, validateMacro, collectVars, collectValueSources, pluralRu, walkSteps } from "./ui/meta.js";
+import { STEP_META, PALETTE, CATEGORIES, stepTitle, describeStep, validateStep, validateMacro, collectVars, collectValueSources, buildSampleVars, describeSampleVars, scopeIssues, resumeLoops, resumableProgress, describeProgress, pluralRu, walkSteps } from "./ui/meta.js";
 import { stepBody, hasBody, branchesOf } from "./ui/editors.js";
 
 const sideEl = document.getElementById("side");
@@ -56,6 +56,7 @@ function touch() {
   refreshRows();
   refreshStatus();
   refreshDatalist();
+  if (progressViews.size) refreshProgressViews();
 }
 
 // ---------------- поиск шага в макросе ----------------
@@ -88,12 +89,33 @@ const api = {
   valueSources: () => collectValueSources(current),
   pick: (target, refs, opts) => pickElement(target, refs, opts),
   highlight: (target, refs, opts) => highlightOnPage(target, refs, opts),
-  async resetProgress(step) {
-    const all = (await chrome.storage.local.get(PROGRESS_KEY))[PROGRESS_KEY] || {};
-    delete all[current.id + ":" + step.id];
-    await chrome.storage.local.set({ [PROGRESS_KEY]: all });
+  bindProgress(step, line, resetBtn) {
+    progressViews.add({ step, line, resetBtn });
+    resetBtn.addEventListener("click", async () => {
+      await resetProgress(current.id, step.id);
+      toast("Прогресс сброшен: следующий запуск начнётся с первой записи", "ok");
+      refreshProgressViews();
+    });
+    refreshProgressViews();
   },
 };
+
+// Строки «обработано N из M» в панели цикла обновляются сами: при правке таблицы и во время запуска
+const progressViews = new Set();
+async function refreshProgressViews() {
+  const all = await loadProgressAll();
+  for (const v of [...progressViews]) if (!v.line.isConnected) progressViews.delete(v);
+  if (!current) return;
+  const loops = resumeLoops(current);
+  for (const v of progressViews) {
+    const found = loops.find((x) => x.step === v.step);
+    const sum = progressSummary(all[progressKey(current.id, v.step.id)], found ? found.list : null);
+    const d = describeProgress(sum);
+    v.line.className = "result-line " + (d.kind === "ok" ? "" : d.kind);
+    v.line.textContent = d.text;
+    v.resetBtn.disabled = !sum;
+  }
+}
 
 // ---------------- список макросов ----------------
 
@@ -364,11 +386,21 @@ function stepRow(step, idx) {
 
 // Строка дерева показывает, что делает шаг, и что в нём не заполнено
 function refreshRows() {
+  // переменные, которых на этом месте ещё нет (например, столбец таблицы вне цикла)
+  const scope = new Map();
+  for (const i of scopeIssues(current)) scope.set(i.stepId, [...(scope.get(i.stepId) || []), i.message]);
   for (const { detail, warn, step } of rows.values()) {
     detail.textContent = describeStep(step);
     const issues = validateStep(step);
-    warn.textContent = issues.length ? "Не заполнено" : "";
-    warn.title = issues.join("\n");
+    const missing = scope.get(step.id) || [];
+    warn.textContent = issues.length ? "Не заполнено" : missing.length ? "Нет данных" : "";
+    warn.title = [...issues, ...missing].join("\n");
+  }
+  const note = ui.inspector && ui.inspector.querySelector('[data-role="scope-warn"]');
+  if (note && selectedId && selectedId !== "macro") {
+    const msgs = scope.get(selectedId) || [];
+    note.textContent = msgs.join("\n");
+    note.hidden = !msgs.length;
   }
   const settings = ui.tree && ui.tree.querySelector(".settings-row .tr-detail");
   if (settings) {
@@ -508,8 +540,14 @@ function renderInspector() {
   );
   ui.inspector.append(
     h("div", { class: "insp-head" }, h("div", { class: "insp-crumb" }, "Шаг " + path.join(".")), h("div", { class: "insp-title" }, stepTitle(step.type)), actions),
-    h("div", { class: "insp-body", "data-role": "inspector-body" }, hasBody(step) ? stepBody(step, api) : h("div", { class: "muted" }, "У этого шага нет настроек."))
+    h(
+      "div",
+      { class: "insp-body", "data-role": "inspector-body" },
+      h("div", { class: "scope-warn", "data-role": "scope-warn", hidden: true }),
+      hasBody(step) ? stepBody(step, api) : h("div", { class: "muted" }, "У этого шага нет настроек.")
+    )
   );
+  refreshRows();
 }
 
 function cloneStep(step) {
@@ -728,13 +766,9 @@ async function pickElement(target, refs, opts = {}) {
   chrome.tabs.update(tabId, { active: true });
 }
 
-// Значения для подстановки в селектор при подсветке: поля первой строки загруженной таблицы
+// Значения для подстановки в селектор при подсветке и при «Проверить шаг»: первая запись загруженной таблицы
 function sampleVars() {
-  const vars = {};
-  walkSteps(current.steps, (s) => {
-    if (s.type === "loadExcel" && s.mode === "rows" && s.rows && s.rows[0]) Object.assign(vars, s.rows[0]);
-  });
-  return vars;
+  return buildSampleVars(current);
 }
 
 async function highlightOnPage(target, refs, opts = {}) {
@@ -826,7 +860,9 @@ async function startRun() {
   openRunDialog();
 }
 
-function openRunDialog() {
+async function openRunDialog() {
+  const saved = resumableProgress(current, await loadProgressAll(), current.id);
+  let restart = false;
   const values = {};
   current.inputs.forEach((i) => { values[i.key] = i.default || ""; });
   let where = current.openInNewTab ? "new" : "tab";
@@ -850,22 +886,36 @@ function openRunDialog() {
     }
   };
   drawWhere();
+  // сохранённый прогресс: продолжить с того места, где остановились, или пройти таблицу заново (пробный прогон прогресс не трогает)
+  const progressBox = h("div", { class: "field", "data-role": "run-progress" });
+  const drawProgress = () => {
+    clear(progressBox);
+    progressBox.hidden = !saved.length || trial;
+    if (progressBox.hidden) return;
+    const { sum } = saved[0];
+    progressBox.append(
+      h("span", { class: "field-label" }, "Прошлый запуск не дошёл до конца"),
+      segmented([["continue", `Продолжить с записи ${sum.next}`], ["restart", "Начать сначала"]], restart ? "restart" : "continue", (v) => { restart = v === "restart"; drawProgress(); }),
+      h("span", { class: "muted" }, `Обработано ${sum.done} из ${sum.total || "?"}` + (restart ? ": прогресс будет сброшен" : ": они будут пропущены"))
+    );
+  };
   const trialBox = h("div");
   const drawTrial = () => {
     clear(trialBox);
     const n = textInput({ type: "number", min: 1, value: trialN, onInput: (v) => { trialN = Math.max(1, parseInt(v, 10) || 1); } });
     n.style.width = "78px";
-    trialBox.append(h("div", { class: "row" }, checkbox("Пробный прогон: только первые", trial, (v) => { trial = v; drawTrial(); }), n, h("span", {}, "записей")));
+    trialBox.append(h("div", { class: "row" }, checkbox("Пробный прогон: только первые", trial, (v) => { trial = v; drawTrial(); drawProgress(); }), n, h("span", {}, "записей")));
   };
   if (hasLoop(current)) drawTrial();
+  drawProgress();
 
   const m = modal({
     title: "Запуск: " + (current.name || "макрос"),
-    body: h("div", { class: "form-grid" }, current.inputs.length ? inputsBox : null, whereBox, hasLoop(current) ? trialBox : null),
+    body: h("div", { class: "form-grid" }, current.inputs.length ? inputsBox : null, whereBox, progressBox, hasLoop(current) ? trialBox : null),
     actions: [
       button("Отмена", { onClick: () => m.close() }),
       (() => {
-        const b = button("Запустить", { kind: "primary", onClick: () => { m.close(); doRun(values, { newTab: where === "new", trial: trial ? trialN : 0 }); } });
+        const b = button("Запустить", { kind: "primary", onClick: () => { m.close(); doRun(values, { newTab: where === "new", trial: trial ? trialN : 0, restart: restart && !trial }); } });
         b.dataset.role = "run-confirm";
         return b;
       })(),
@@ -873,14 +923,14 @@ function openRunDialog() {
   });
 }
 
-function doRun(inputValues, { newTab, trial }) {
+function doRun(inputValues, { newTab, trial, restart }) {
   const tabId = newTab ? null : getTargetTabId();
   if (!newTab && !tabId) {
     toast("Выберите рабочую вкладку вверху страницы или запустите в новой", "error");
     return;
   }
   startRunUi(current.name, uid("run"), current.id, trial ? `Пробный прогон: первые ${trial}` : "");
-  chrome.runtime.sendMessage({ action: "runMacro", macro: { ...current, openInNewTab: newTab }, inputValues, runId: run.runId, tabId, trialLimit: trial });
+  chrome.runtime.sendMessage({ action: "runMacro", macro: { ...current, openInNewTab: newTab }, inputValues, runId: run.runId, tabId, trialLimit: trial, restartProgress: !!restart });
 }
 
 function runSingleStep(step) {
@@ -890,7 +940,10 @@ function runSingleStep(step) {
     return;
   }
   startRunUi("Один шаг: " + stepTitle(step.type), uid("run"), "single", "");
-  chrome.runtime.sendMessage({ action: "runMacro", macro: { id: "single", name: "(один шаг)", openInNewTab: false, inputs: [], triggers: [], steps: [step] }, inputValues: {}, runId: run.runId, tabId });
+  // вне цикла у шага нет «текущей записи»: подставляем первую запись загруженной таблицы, как в пробном прогоне
+  const sample = describeSampleVars(current);
+  if (sample && JSON.stringify(step).includes("${")) addLog({ status: "info", text: "Значения для проверки шага - первая запись таблицы: " + sample, cls: "title" });
+  chrome.runtime.sendMessage({ action: "runMacro", macro: { id: "single", name: "(один шаг)", openInNewTab: false, inputs: [], triggers: [], steps: [step] }, inputValues: sampleVars(), runId: run.runId, tabId });
 }
 
 function stopRun() {
@@ -1030,6 +1083,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes[REPORTS_KEY]) refreshReportsCount();
+  if (area === "local" && changes[PROGRESS_KEY]) refreshProgressViews();
 });
 
 // ---------------- старт ----------------

@@ -2,7 +2,7 @@
 // для свёрнутой карточки, проверка заполненности и сбор переменных для подсказок.
 
 import { STEP_LABELS } from "../common.js";
-import { OP_LABELS, UNARY_OPS, migrateCondition } from "../logic.js";
+import { OP_LABELS, UNARY_OPS, migrateCondition, progressSummary } from "../logic.js";
 
 export const CATEGORIES = {
   nav: { label: "Страница и вкладки", color: "var(--c-nav)" },
@@ -248,7 +248,143 @@ export function validateMacro(macro) {
   walk(macro.steps, (s, path) => {
     for (const message of validateStep(s)) out.push({ stepId: s.id, path: path.join("."), message });
   });
+  out.push(...scopeIssues(macro));
   return out;
+}
+
+// ---------------- где какие переменные доступны ----------------
+
+const VAR_RE = /\$\{([a-zA-Z_]\w*)\}/g;
+const BUILTIN_NAMES = ["_now", "_date", "_time"];
+
+// Имена ${...}, которые шаг подставляет в свои поля (без вложенных шагов)
+function usedNames(step) {
+  const texts = [];
+  const add = (v) => typeof v === "string" && texts.push(v);
+  for (const k of ["url", "selector", "value", "rowSelector", "scopeSelector", "scopeText", "count", "filename", "template", "header"]) add(step[k]);
+  if (step.type === "condition") {
+    migrateCondition(step);
+    for (const t of step.tests || []) for (const k of ["selector", "scopeSelector", "scopeText", "value", "left", "right"]) add(t[k]);
+  }
+  const names = new Set();
+  for (const t of texts) for (const m of t.matchAll(VAR_RE)) names.add(m[1]);
+  return [...names];
+}
+
+// Что шаг сам кладёт в переменные
+function definedBy(step) {
+  const out = [];
+  if (["loadExcel", "extract", "extractTable", "setVar"].includes(step.type) && step.varName) out.push(step.varName);
+  if (step.type === "customJs" && step.saveTo) out.push(step.saveTo);
+  return out;
+}
+
+function definedInside(steps, acc = new Set()) {
+  walk(steps, (s) => definedBy(s).forEach((n) => acc.add(n)));
+  return acc;
+}
+
+// Предупреждения: ${переменная} используется там, где её ещё нет (например, столбец таблицы вне цикла
+// «Для каждой записи»), и цикл по списку, которого нет до него. Только то, в чём можно быть уверенным.
+export function scopeIssues(macro) {
+  const out = [];
+  const all = [];
+  walk(macro && macro.steps, (s) => all.push(s));
+  const columnOwner = new Map(); // имя столбца -> имя переменной таблицы
+  for (const s of all) if (s.type === "loadExcel" && s.mode === "rows") (s.columns || []).forEach((c) => c.varName && columnOwner.set(c.varName, s.varName));
+
+  const base = new Set([...BUILTIN_NAMES]);
+  for (const i of (macro && macro.inputs) || []) if (i.key) base.add(i.key);
+
+  const visit = (steps, defined, pathPrefix, extra = {}) => {
+    (steps || []).forEach((st, idx) => {
+      const path = [...pathPrefix, idx + 1].join(".");
+      const missing = extra.open ? [] : usedNames(st).filter((n) => !defined.has(n));
+      if (missing.length) {
+        const n = missing[0];
+        const message = columnOwner.has(n)
+          ? `Значение \${${n}} - столбец таблицы, он доступен только внутри шага «Для каждой записи»: перенесите этот шаг в цикл`
+          : `Переменная \${${n}} здесь ещё не задана: она должна получить значение в шаге выше`;
+        out.push({ stepId: st.id, path, message });
+      }
+      if (st.type === "loopList" && st.sourceKey && !defined.has(st.sourceKey)) {
+        out.push({ stepId: st.id, path, message: `Список «${st.sourceKey}» не найден до этого шага: шаг «Данные из Excel/CSV» с таким именем должен стоять выше цикла` });
+      }
+      if (st.type === "loopList" || st.type === "loopCount") {
+        const inner = new Set(defined);
+        definedInside(st.steps).forEach((n) => inner.add(n)); // значения переходят из прохода в проход
+        inner.add(st.itemVar || (st.type === "loopList" ? "item" : "i"));
+        let open = !!extra.open;
+        if (st.type === "loopList") {
+          inner.add("_index");
+          inner.add("_total");
+          const src = all.find((x) => x.type === "loadExcel" && x.varName === st.sourceKey);
+          const tbl = all.find((x) => x.type === "extractTable" && x.varName === st.sourceKey);
+          if (src && src.mode === "rows") {
+            (src.columns || []).forEach((c) => c.varName && inner.add(c.varName));
+            inner.add("_row");
+          } else if (tbl) {
+            (tbl.columns || []).forEach((c) => c.key && inner.add(c.key));
+          } else if (!src) {
+            open = true; // источник неизвестен (параметр запуска и т. п.) - поля записи проверить нельзя
+          }
+        }
+        visit(st.steps, inner, [...pathPrefix, idx + 1], { open });
+        if (st.type === "loopList") visit(st.catchSteps, new Set([...inner, "_error"]), [...pathPrefix, idx + 1], { open });
+      } else {
+        visit(st.then, defined, [...pathPrefix, idx + 1], extra);
+        visit(st.else, defined, [...pathPrefix, idx + 1], extra);
+      }
+      definedBy(st).forEach((n) => defined.add(n));
+      definedInside(st.then).forEach((n) => defined.add(n));
+      definedInside(st.else).forEach((n) => defined.add(n));
+    });
+  };
+  visit(macro && macro.steps, base, []);
+  return out;
+}
+
+// Значения-образцы для «Проверить шаг» и «Показать на странице»: как если бы шаг выполнялся на первой записи
+// загруженной таблицы (столбцы, ${_row}, текущая запись цикла), плюс значения параметров запуска по умолчанию
+export function buildSampleVars(macro) {
+  const vars = {};
+  for (const i of (macro && macro.inputs) || []) if (i.key) vars[i.key] = i.default || "";
+  const all = [];
+  walk(macro && macro.steps, (s) => all.push(s));
+  const itemNames = (listName) => {
+    const names = all.filter((s) => s.type === "loopList" && s.sourceKey === listName).map((s) => s.itemVar || "item");
+    return names.length ? names : ["item"];
+  };
+  let first = null;
+  for (const s of all) {
+    if (s.type !== "loadExcel") continue;
+    if (s.mode === "rows") {
+      if (s.rows && s.rows[0]) {
+        Object.assign(vars, s.rows[0]);
+        first = first || { row: s.rows[0], total: s.rows.length };
+      }
+    } else if (s.values && s.values.length) {
+      for (const n of itemNames(s.varName)) vars[n] = s.values[0];
+      first = first || { total: s.values.length };
+    }
+  }
+  if (first) {
+    vars._index = 1;
+    vars._total = first.total;
+  }
+  return vars;
+}
+
+// «fio = Иванов И. И.; polis = 2547…» - что подставилось при проверке шага (пусто, если таблицы нет)
+export function describeSampleVars(macro) {
+  const vars = buildSampleVars(macro);
+  const parts = [];
+  walk(macro && macro.steps, (s) => {
+    if (s.type !== "loadExcel") return;
+    if (s.mode === "rows" && s.rows && s.rows[0]) (s.columns || []).forEach((c) => parts.push(`${c.varName} = «${truncate(vars[c.varName], 30)}»`));
+    else if (s.values && s.values.length) parts.push(`${s.varName} (первое значение) = «${truncate(s.values[0], 30)}»`);
+  });
+  return parts.join("; ");
 }
 
 // ---------------- переменные для подсказок ----------------
@@ -303,7 +439,13 @@ export function collectValueSources(macro) {
   add("Столбцы таблицы", columns);
 
   const loops = [];
+  // у цикла по строкам таблицы «текущая запись» - целая строка, а не текст: вместо неё выбирают столбцы
+  const tableLists = new Set();
   walk(macro && macro.steps, (st) => {
+    if (st.type === "loadExcel" && st.mode === "rows" && st.varName) tableLists.add(st.varName);
+  });
+  walk(macro && macro.steps, (st) => {
+    if (st.type === "loopList" && tableLists.has(st.sourceKey)) return;
     if ((st.type === "loopList" || st.type === "loopCount") && st.itemVar && !seen.has(st.itemVar)) {
       loops.push(item(st.itemVar, st.type === "loopList" ? `Текущая запись цикла  (${st.itemVar})` : `Номер повтора  (${st.itemVar})`));
     }
@@ -328,4 +470,43 @@ export function collectValueSources(macro) {
     item("_now", "Дата и время  (_now)"),
   ]);
   return groups;
+}
+
+// ---------------- прогресс по записям ----------------
+
+// Циклы с сохранением прогресса: { step, list }; list - записи из шага «Данные из Excel/CSV», если источник цикла известен
+export function resumeLoops(macro) {
+  const all = [];
+  walk(macro && macro.steps, (s) => all.push(s));
+  return all
+    .filter((s) => s.type === "loopList" && s.resume)
+    .map((step) => {
+      const src = all.find((x) => x.type === "loadExcel" && x.varName === step.sourceKey);
+      const list = src ? (src.mode === "rows" ? src.rows : src.values) : null;
+      return { step, list: Array.isArray(list) ? list : null };
+    });
+}
+
+// Сводки сохранённого прогресса макроса, в которых есть что продолжать: [{ step, sum }]
+export function resumableProgress(macro, allProgress, macroId) {
+  const out = [];
+  for (const { step, list } of resumeLoops(macro)) {
+    const sum = progressSummary((allProgress || {})[`${macroId || macro.id}:${step.id}`], list);
+    if (sum && sum.done > 0 && (!sum.total || sum.done < sum.total)) out.push({ step, sum });
+  }
+  return out;
+}
+
+const fmtWhen = (at) => (at ? new Date(at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "");
+
+// Текст статуса прогресса для панели цикла: { kind: "none" | "ok" | "warn", text }
+export function describeProgress(sum) {
+  if (!sum) return { kind: "none", text: "Сохранённого прогресса нет: запуск начнётся с первой записи" };
+  if (!sum.done) return { kind: "none", text: "Сохранённый прогресс не относится к этой таблице (записей не найдено): запуск начнётся с первой записи" };
+  if (sum.total && sum.done >= sum.total) return { kind: "warn", text: `Все записи (${sum.total}) уже обработаны: следующий запуск пройдёт таблицу с начала` };
+  const parts = [`Обработано ${sum.done} из ${sum.total || "?"}`, `следующая запись - ${sum.next}`];
+  if (sum.foreign) parts.push(`${sum.foreign} ранее обработанных в таблице не найдено`);
+  const when = fmtWhen(sum.at);
+  if (when) parts.push(`сохранено ${when}`);
+  return { kind: sum.foreign ? "warn" : "ok", text: parts.join(" · ") };
 }

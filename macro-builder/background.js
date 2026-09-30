@@ -3,10 +3,11 @@
 // шаг за раз по команде отсюда - вся оркестрация (навигация, ожидание,
 // циклы, условия, переменные, повторы при ошибке, планировщик) живёт здесь.
 
-import { substitute, loadMacros, STORAGE_KEY, patternToRegex, REPORTS_KEY, PROGRESS_KEY } from "./common.js";
+import { substitute, problemVars, describeVarProblems, loadMacros, STORAGE_KEY, patternToRegex, REPORTS_KEY, PROGRESS_KEY, progressKey } from "./common.js";
 import {
   evaluateCondition,
-  listSignature,
+  planResume,
+  rowKey,
   sanitizeReportName,
   appendBlock,
   toBase64Utf8,
@@ -115,8 +116,19 @@ function broadcast(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
+// Строка шага с подстановкой ${переменных}; незаданная переменная или целая строка таблицы - ошибка,
+// а не тихая пустая строка (иначе «Ввести текст» из таблицы молча ничего не вводит)
+function substituteChecked(str, vars) {
+  const problems = problemVars(str, vars);
+  if (problems.length) {
+    const text = describeVarProblems(problems);
+    throw new Error(text[0].toUpperCase() + text.slice(1));
+  }
+  return substitute(str, vars);
+}
+
 async function doNavigate(ctx, step) {
-  const url = substitute(step.url, ctx.vars);
+  const url = substituteChecked(step.url, ctx.vars);
   await chrome.tabs.update(ctx.tabId, { url });
   await waitForTabComplete(ctx.tabId, Number(step.timeoutMs) || 25000);
   await sleep(250);
@@ -126,13 +138,25 @@ async function doNavigate(ctx, step) {
 function subStep(step, vars) {
   const out = { ...step };
   for (const k of ["url", "selector", "value", "rowSelector", "scopeSelector", "scopeText"]) {
-    if (typeof out[k] === "string") out[k] = substitute(out[k], vars);
+    if (typeof out[k] === "string") out[k] = substituteChecked(out[k], vars);
+  }
+  // «Ввести текст» со значением из таблицы: пустая ячейка - ошибка записи, а не ввод пустоты
+  if (step.type === "type" && /\$\{/.test(String(step.value || "")) && out.value.trim() === "") {
+    throw new Error(`Нечего вводить: значение ${step.value} пустое (пустая ячейка в таблице)`);
   }
   return out;
 }
 
 function resolveList(ctx, step) {
   const raw = ctx.vars[step.sourceKey];
+  if (raw === undefined || raw === null) {
+    const known = Object.keys(ctx.vars).filter((k) => Array.isArray(ctx.vars[k]));
+    throw new Error(
+      `Не найден список «${step.sourceKey}»: шаг «Данные из Excel/CSV» с таким именем переменной должен стоять раньше цикла` +
+        (known.length ? ` (сейчас есть: ${known.join(", ")})` : " (пока ни одного списка нет)")
+    );
+  }
+  if (Array.isArray(raw) && !raw.length) throw new Error(`Список «${step.sourceKey}» пуст - повторять нечего`);
   if (Array.isArray(raw)) return raw.map((x) => (x !== null && typeof x === "object" ? x : String(x)));
   return String(raw || "")
     .split(/\r?\n|,/)
@@ -286,7 +310,7 @@ async function doAppendReport(ctx, step) {
   const name = sanitizeReportName(substitute(step.filename || "report.md", ctx.vars));
   if (!ctx.reports.has(name)) {
     let buf = "";
-    if (step.resetPerRun === false) buf = ((await loadReports())[name] || {}).text || "";
+    if (step.resetPerRun === false || ctx.continuing) buf = ((await loadReports())[name] || {}).text || "";
     if (!buf && step.header) buf = appendBlock("", substitute(step.header, ctx.vars));
     ctx.reports.set(name, buf);
   }
@@ -487,73 +511,110 @@ async function runStep(ctx, step) {
 
 // Цикл по списку значений или строкам таблицы. Для строки-объекта её поля становятся переменными
 // (${fio}, ${policy}, ${_row}), плюс ${_index} и ${_total}. См. поля limit / resume / onRowError у шага.
+// Прогресс (resume): обработанные записи запоминаются по содержимому, поэтому следующий запуск с той же
+// таблицей пропускает уже сделанное, даже если таблицу поправили; по окончании прогресс очищается.
 async function runLoopList(ctx, step) {
   const list = resolveList(ctx, step);
-  const key = ctx.macroId + ":" + step.id;
-  const sig = listSignature(list);
-  let start = 0;
+  const key = progressKey(ctx.macroId, step.id);
   const useProgress = step.resume && !ctx.trialLimit;
+  let skip = list.map(() => false);
+  let doneKeys = []; // ключи обработанных записей (прошлых запусков и этого)
   if (useProgress) {
-    const saved = (await loadProgress())[key];
-    if (saved && saved.sig === sig && saved.done > 0 && saved.done <= list.length) {
-      start = saved.done;
-      ctx.log({ type: step.type, status: "info", message: `продолжаю с записи ${start + 1} из ${list.length} (прогресс сохранён)` });
+    if (ctx.restartProgress && !ctx.clearedProgress.has(key)) {
+      ctx.clearedProgress.add(key);
+      await saveProgressEntry(key, null);
+      ctx.log({ type: step.type, status: "info", message: "прогресс сброшен, начинаю с первой записи" });
+    } else {
+      const plan = planResume(list, (await loadProgress())[key]);
+      if (plan.done) {
+        if (plan.done >= list.length) {
+          await saveProgressEntry(key, null);
+          ctx.log({ type: step.type, status: "warn", message: `все ${list.length} записей уже обработаны в прошлом запуске; прогресс очищен - запустите ещё раз, чтобы пройти таблицу с начала` });
+          return;
+        }
+        skip = plan.skip;
+        doneKeys = list.filter((_, i) => skip[i]).map(rowKey);
+        ctx.continuing = true; // отчёты этого запуска дописываются к накопленным, а не начинаются заново
+        ctx.log({
+          type: step.type,
+          status: "info",
+          message: `продолжаю с записи ${plan.next} из ${list.length}: уже обработано ${plan.done}` + (plan.foreign ? `, ещё ${plan.foreign} из сохранённых в таблице не найдено (её меняли)` : ""),
+        });
+      }
     }
   }
   let limit = Math.max(0, Number(step.limit) || 0);
   if (ctx.trialLimit) limit = limit ? Math.min(limit, ctx.trialLimit) : ctx.trialLimit;
   let processed = 0;
   let finished = true;
-  for (let i = start; i < list.length; i++) {
-    if (ctx.cancelled()) return;
-    if (limit && processed >= limit) {
-      finished = false;
-      ctx.log({ type: step.type, status: "info", message: `достигнут лимит ${limit} записей` });
-      break;
-    }
-    const item = list[i];
-    ctx.vars[step.itemVar || "item"] = item;
-    if (item && typeof item === "object") Object.assign(ctx.vars, item);
-    ctx.vars._index = i + 1;
-    ctx.vars._total = list.length;
-    ctx.log({
-      type: step.type,
-      status: "info",
-      message: `запись ${i + 1} из ${list.length}${item && item._row ? ` (строка Excel ${item._row})` : ""}`,
-    });
-    // полоса прогресса в интерфейсе: подпись - первое текстовое поле записи
-    const label = item && typeof item === "object" ? Object.entries(item).find(([k, v]) => !k.startsWith("_") && v)?.[1] : item;
-    broadcast({ type: "mb-progress", runId: ctx.runId, stepId: step.id, index: i + 1, total: list.length, label: String(label ?? "").slice(0, 80) });
-    ctx.created.length = 0;
-    const depth = ctx.tabStack.length;
-    let brk = false;
-    try {
-      await runSteps(ctx, step.steps);
-    } catch (e) {
-      if (e instanceof FlowSignal) {
-        if (e.kind === "stop") {
+  let last = "";
+  let unsaved = 0;
+  // Запись прогресса на диск не после каждой записи (для больших таблиц это сотни КБ каждый раз), а порциями
+  const saveEvery = Math.max(1, Math.ceil(list.length / 200));
+  const persist = async () => {
+    unsaved = 0;
+    await saveProgressEntry(key, { v: 2, keys: doneKeys, total: list.length, at: Date.now(), last });
+  };
+  try {
+    for (let i = 0; i < list.length; i++) {
+      if (ctx.cancelled()) return;
+      if (skip[i]) continue;
+      if (limit && processed >= limit) {
+        finished = false;
+        ctx.log({ type: step.type, status: "info", message: `достигнут лимит ${limit} записей` });
+        break;
+      }
+      const item = list[i];
+      ctx.vars[step.itemVar || "item"] = item;
+      if (item && typeof item === "object") Object.assign(ctx.vars, item);
+      ctx.vars._index = i + 1;
+      ctx.vars._total = list.length;
+      ctx.log({
+        type: step.type,
+        status: "info",
+        message: `запись ${i + 1} из ${list.length}${item && item._row ? ` (строка Excel ${item._row})` : ""}`,
+      });
+      // полоса прогресса в интерфейсе: подпись - первое текстовое поле записи
+      const label = item && typeof item === "object" ? Object.entries(item).find(([k, v]) => !k.startsWith("_") && v)?.[1] : item;
+      broadcast({ type: "mb-progress", runId: ctx.runId, stepId: step.id, index: i + 1, total: list.length, label: String(label ?? "").slice(0, 80) });
+      ctx.created.length = 0;
+      const depth = ctx.tabStack.length;
+      let brk = false;
+      try {
+        await runSteps(ctx, step.steps);
+      } catch (e) {
+        if (e instanceof FlowSignal) {
+          if (e.kind === "stop") {
+            await unwindTabs(ctx, depth);
+            throw e;
+          }
+          brk = e.kind === "break";
+        } else if (step.onRowError === "continue" && !ctx.cancelled()) {
+          ctx.log({ type: step.type, status: "warn", message: `ошибка в записи ${i + 1}, иду дальше: ${e.message}` });
+          ctx.vars._error = e.message;
           await unwindTabs(ctx, depth);
+          try {
+            await runSteps(ctx, step.catchSteps);
+          } catch (e2) {
+            if (!(e2 instanceof FlowSignal) || e2.kind === "stop") throw e2;
+            brk = e2.kind === "break";
+          }
+        } else {
           throw e;
         }
-        brk = e.kind === "break";
-      } else if (step.onRowError === "continue" && !ctx.cancelled()) {
-        ctx.log({ type: step.type, status: "warn", message: `ошибка в записи ${i + 1}, иду дальше: ${e.message}` });
-        ctx.vars._error = e.message;
-        await unwindTabs(ctx, depth);
-        try {
-          await runSteps(ctx, step.catchSteps);
-        } catch (e2) {
-          if (!(e2 instanceof FlowSignal) || e2.kind === "stop") throw e2;
-          brk = e2.kind === "break";
-        }
-      } else {
-        throw e;
       }
+      await unwindTabs(ctx, depth);
+      processed++;
+      if (useProgress) {
+        doneKeys.push(rowKey(item));
+        last = String(label ?? "").slice(0, 80);
+        if (++unsaved >= saveEvery) await persist();
+      }
+      if (brk) break;
     }
-    await unwindTabs(ctx, depth);
-    processed++;
-    if (useProgress) await saveProgressEntry(key, { sig, done: i + 1, at: Date.now() });
-    if (brk) break;
+  } finally {
+    // остановка, ошибка или пауза: то, что успели обработать, не теряется
+    if (useProgress && unsaved) await persist().catch(() => {});
   }
   if (useProgress && finished) await saveProgressEntry(key, null);
 }
@@ -563,7 +624,7 @@ async function getActiveTabId() {
   return tabs[0] && tabs[0].id;
 }
 
-async function runMacro(macro, inputValues, runId, existingTabId, trialLimit) {
+async function runMacro(macro, inputValues, runId, existingTabId, trialLimit, restartProgress) {
   const cancelState = { cancelled: false };
   runs.set(runId, cancelState);
   const created = [];
@@ -573,6 +634,9 @@ async function runMacro(macro, inputValues, runId, existingTabId, trialLimit) {
     macroId: macro.id,
     runId,
     trialLimit: Math.max(0, Number(trialLimit) || 0), // пробный прогон: не больше N записей в каждом цикле, прогресс не сохраняется
+    restartProgress: !!restartProgress, // «Начать сначала»: сохранённый прогресс циклов сбрасывается
+    clearedProgress: new Set(),
+    continuing: false, // запуск продолжает прошлый: отчёты дописываются к накопленным
     tabId: null,
     windowId: null,
     tabStack: [], // вкладки, из которых макрос перешёл в новые (для «закрыть и вернуться»)
@@ -724,7 +788,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "runMacro") {
     (async () => {
       const tabId = msg.macro.openInNewTab ? null : msg.tabId || (await getActiveTabId());
-      runMacro(msg.macro, msg.inputValues || {}, msg.runId, tabId, msg.trialLimit);
+      runMacro(msg.macro, msg.inputValues || {}, msg.runId, tabId, msg.trialLimit, msg.restartProgress);
     })();
     sendResponse({ started: true });
     return false;

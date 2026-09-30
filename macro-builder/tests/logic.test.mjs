@@ -11,7 +11,7 @@ import {
   listSignature,
   suggestVarName,
 } from "../logic.js";
-import { substitute } from "../common.js";
+import { substitute, problemVars, describeVarProblems } from "../common.js";
 
 test("normalizeText: регистр, пробелы, ё=е", () => {
   assert.equal(normalizeText("  ЁЛКИНА   Ёлка "), "елкина елка");
@@ -298,4 +298,72 @@ test("compareText: операции над длиной (для условий �
   assert.equal(compareText("lenLte", "12345", "4"), false);
   assert.equal(compareText("lenEq", "abc", ""), false, "пустое число - не срабатывает");
   assert.equal(compareText("lenEq", "abc", "три"), false);
+});
+
+test("problemVars: не заданные переменные и целые строки таблицы находятся, пустая ячейка и встроенные - нет", () => {
+  const vars = { fio: "", item: { fio: "Иванов", polis: "1", _row: 2 }, list: ["a"], n: 0 };
+  assert.deepEqual(problemVars("${fio} ${n} ${list} ${_date} ${_now}", vars), [], "пустая ячейка, 0, массив и встроенные - не проблема");
+  assert.deepEqual(problemVars("${nope} и ${nope} ещё", vars), [{ name: "nope", kind: "missing" }], "повторы не дублируются");
+  assert.deepEqual(problemVars("${item}", vars), [{ name: "item", kind: "row", hint: "fio" }]);
+  assert.deepEqual(problemVars("без переменных", vars), []);
+  assert.deepEqual(problemVars("${x}", null), []);
+  assert.match(describeVarProblems(problemVars("${nope}", vars)), /не задана переменная \$\{nope\}.*только внутри шага «Для каждой записи»/);
+  assert.match(describeVarProblems(problemVars("${item}", vars)), /целая строка таблицы.*например \$\{fio\}/);
+});
+
+// ---------------- прогресс по записям ----------------
+import { rowKey, planResume, progressSummary } from "../logic.js";
+
+const R = (fio, polis, row) => ({ fio, polis, _row: row });
+
+test("rowKey: одинаковые записи дают один ключ, номер строки и пробелы по краям не важны, разные - разные", () => {
+  assert.equal(rowKey(R("Иванов", "1", 2)), rowKey({ polis: " 1 ", fio: "Иванов", _row: 99 }));
+  assert.notEqual(rowKey(R("Иванов", "1", 2)), rowKey(R("Иванов", "2", 2)));
+  assert.equal(rowKey("abc"), rowKey(" abc "));
+  assert.notEqual(rowKey("abc"), rowKey("abd"));
+  // граница между полями не смешивается: ("ab","c") и ("a","bc") - разные записи
+  assert.notEqual(rowKey({ a: "ab", b: "c" }), rowKey({ a: "a", b: "bc" }));
+  const keys = new Set(Array.from({ length: 20000 }, (_, i) => rowKey({ fio: "Человек " + i, polis: String(i * 7) })));
+  assert.equal(keys.size, 20000, "на 20 тысячах разных записей совпадений нет");
+});
+
+test("planResume: без прогресса ничего не пропускается", () => {
+  const list = [R("A", "1", 2), R("B", "2", 3)];
+  assert.deepEqual(planResume(list, null), { skip: [false, false], done: 0, foreign: 0, next: 1 });
+});
+
+test("planResume: обработанные записи пропускаются и после правки таблицы (порядок, вставка, удаление, номера строк)", () => {
+  const before = [R("A", "1", 2), R("B", "2", 3), R("C", "3", 4), R("D", "4", 5)];
+  const entry = { v: 2, keys: [before[0], before[1], before[2]].map(rowKey), total: 4, at: 1 };
+  assert.deepEqual(planResume(before, entry), { skip: [true, true, true, false], done: 3, foreign: 0, next: 4 });
+  // в таблицу вставили новую запись в начало и убрали B: номера строк сместились
+  const edited = [R("NEW", "9", 2), R("A", "1", 3), R("C", "3", 4), R("D", "4", 5)];
+  const p = planResume(edited, entry);
+  assert.deepEqual(p.skip, [false, true, true, false]);
+  assert.equal(p.done, 2);
+  assert.equal(p.foreign, 1, "запись B из сохранённых в новой таблице не найдена");
+  assert.equal(p.next, 1, "первой пойдёт новая запись");
+  // всё обработано
+  assert.equal(planResume(before, { keys: before.map(rowKey) }).next, 5);
+});
+
+test("planResume: одинаковые записи считаются по количеству, а не все сразу", () => {
+  const list = ["x", "x", "x", "y"];
+  const entry = { keys: [rowKey("x"), rowKey("x")] };
+  assert.deepEqual(planResume(list, entry).skip, [true, true, false, false]);
+});
+
+test("planResume: прогресс старого формата { sig, done } подхватывается, если таблица та же", () => {
+  const list = ["a", "b", "c"];
+  const old = { sig: listSignature(list), done: 2, at: 5 };
+  assert.deepEqual(planResume(list, old).skip, [true, true, false]);
+  assert.deepEqual(planResume(["a", "b", "c", "d"], old).skip, [false, false, false, false], "таблица другая - старый прогресс не применяется");
+});
+
+test("progressSummary: с известным списком считает по нему, без - берёт запомненное", () => {
+  const list = [R("A", "1", 2), R("B", "2", 3), R("C", "3", 4)];
+  const entry = { keys: [list[0], list[2], R("Ушла", "0", 9)].map(rowKey), total: 3, at: 123, last: "C" };
+  assert.deepEqual(progressSummary(entry, list), { done: 2, total: 3, foreign: 1, next: 2, at: 123, last: "C" });
+  assert.deepEqual(progressSummary(entry, null), { done: 3, total: 3, foreign: 0, next: 4, at: 123, last: "C" });
+  assert.equal(progressSummary(null, list), null);
 });
