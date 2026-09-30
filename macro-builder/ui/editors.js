@@ -12,7 +12,7 @@ const NO_BODY = ["closeTab", "loopContinue", "loopBreak", "stopMacro"];
 export const hasBody = (step) => !NO_BODY.includes(step.type);
 
 // Повтор при ошибке имеет смысл только для шагов, работающих со страницей
-const RETRY_TYPES = ["navigate", "click", "hover", "type", "waitFor", "extract", "extractTable", "scroll", "keypress", "customJs", "switchTab"];
+const RETRY_TYPES = ["navigate", "click", "hover", "type", "clearField", "waitFor", "extract", "extractTable", "scroll", "keypress", "customJs", "switchTab"];
 
 const SEL_KEYS = { sel: "selector", type: "selectorType", frame: "frameUrlIncludes" };
 const REFS = new WeakMap(); // цель (шаг или проверка) -> ссылки на поля селектора для «Указать»/«Показать»
@@ -61,7 +61,8 @@ function secInput(target, key, api) {
 const section = (title, ...children) => h("div", { class: "section" }, title ? h("div", { class: "section-title" }, title) : null, children);
 const checks = (label, ...items) => field(label, h("div", { class: "row wrap" }, items));
 
-// Список «Вставить значение...»: подставляет ${имя} в указанное поле в позицию курсора
+// Список «Вставить значение...» под текстовым блоком отчёта: подставляет ${имя} в позицию курсора.
+// Используется только там, где текст собирается из нескольких значений (шаблон отчёта).
 function insertSelect(getInput, api) {
   const sel = h("select", { title: "Вставить значение из таблицы или переменную в текст", "data-role": "insert-value" });
   sel.append(h("option", { value: "" }, "Вставить значение..."));
@@ -71,6 +72,7 @@ function insertSelect(getInput, api) {
     sel.append(og);
   }
   sel.style.width = "auto";
+  sel.style.maxWidth = "100%";
   sel.addEventListener("change", () => {
     if (sel.value) insertAtCaret(getInput(), sel.value);
     sel.value = "";
@@ -78,11 +80,14 @@ function insertSelect(getInput, api) {
   return sel;
 }
 
-// Значение, которое вводит или сравнивает макрос: столбец таблицы / переменная из списка либо свой текст
-// (в своём тексте тоже можно вставлять значения из списка)
+// Значение, которое вводит или сравнивает макрос: столбец таблицы / переменная из списка либо свой текст.
+// Если в макросе нет ни таблицы, ни переменных, выбирать не из чего - остаётся обычное поле ввода.
 function valueField(target, key, api, { placeholder = "" } = {}) {
   const groups = api.valueSources();
   const cur = String(target[key] ?? "");
+  const plainInput = () => textInput({ value: cur, mono: true, placeholder, onInput: (v) => { target[key] = v; api.save(); } });
+  if (!groups.some((g) => g.label !== "Служебные")) return plainInput();
+
   const known = new Set(groups.flatMap((g) => g.items.map((i) => i.value)));
   const isRef = known.has(cur);
   const wrap = h("div", { class: "value-field", "data-role": "value-field" });
@@ -100,10 +105,7 @@ function valueField(target, key, api, { placeholder = "" } = {}) {
     api.rerender();
   });
   wrap.append(sel);
-  if (!isRef) {
-    const input = textInput({ value: cur, mono: true, placeholder, onInput: (v) => { target[key] = v; api.save(); } });
-    wrap.append(h("div", { class: "row" }, h("div", { style: "flex:1;min-width:0" }, input), insertSelect(() => input, api)));
-  }
+  if (!isRef) wrap.append(plainInput());
   return wrap;
 }
 
@@ -251,20 +253,23 @@ function testRow(step, t, i, api) {
     return row;
   }
 
+  // Поле селектора всегда на своей строке во всю ширину: рядом с ним ничего не стоит и оно не сжимается
   if (t.kind === "element") {
     row.append(
       h(
         "div",
         { class: "test-line" },
         kindSel,
-        h("div", { class: "grow" }, pickControl(t, api, SEL_KEYS, true)),
-        selectInput([["no", "есть"], ["yes", "нет"]], t.negate ? "yes" : "no", (v) => { t.negate = v === "yes"; api.save(); }),
+        selectInput([["no", "есть на странице"], ["yes", "нет на странице"]], t.negate ? "yes" : "no", (v) => { t.negate = v === "yes"; api.save(); }),
+        h("div", { class: "grow" }),
         remove
-      )
+      ),
+      pickControl(t, api, SEL_KEYS, true)
     );
   } else {
     row.append(
-      h("div", { class: "test-line" }, kindSel, h("div", { class: "grow" }, pickControl(t, api, SEL_KEYS, true)), remove),
+      h("div", { class: "test-line" }, kindSel, h("div", { class: "grow" }), remove),
+      pickControl(t, api, SEL_KEYS, true),
       h(
         "div",
         { class: "test-line" },
@@ -376,13 +381,13 @@ export function stepBody(step, api) {
   let parts = [];
   switch (step.type) {
     case "navigate": {
-      const url = bind(step, "url", api, { placeholder: "https://...", mono: true });
-      parts = [section("Страница", field("Адрес", h("div", { class: "row" }, h("div", { style: "flex:1;min-width:0" }, url), insertSelect(() => url, api)))), advanced(step, api)];
+      parts = [section("Страница", field("Адрес", bind(step, "url", api, { placeholder: "https://...", mono: true }))), advanced(step, api)];
       break;
     }
     case "click":
     case "hover":
-      parts = [section("Элемент на странице", pickRow(step, api), scopeBlock(step, api)), advanced(step, api, ...selectorAdvanced(step, api))];
+    case "clearField":
+      parts = [section(step.type === "clearField" ? "Поле на странице" : "Элемент на странице", pickRow(step, api), scopeBlock(step, api)), advanced(step, api, ...selectorAdvanced(step, api))];
       break;
     case "type":
       parts = [

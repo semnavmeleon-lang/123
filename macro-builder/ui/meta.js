@@ -23,6 +23,7 @@ export const STEP_META = {
   click: { cat: "act", tip: "Нажать на элемент страницы" },
   hover: { cat: "act", tip: "Навести курсор (для меню, раскрывающихся по наведению)" },
   type: { cat: "act", tip: "Вписать текст в поле" },
+  clearField: { cat: "act", tip: "Стереть весь текст в поле" },
   keypress: { cat: "act", tip: "Нажать клавишу (Enter, Tab…)" },
   loadExcel: { cat: "data", tip: "Загрузить столбец или таблицу из файла Excel/CSV" },
   extract: { cat: "data", tip: "Считать текст или значение элемента в переменную" },
@@ -42,7 +43,7 @@ export const STEP_META = {
 // Порядок в палитре: сначала самое частое
 export const PALETTE = [
   { cat: "nav", types: ["navigate", "wait", "waitFor", "switchTab", "closeTab", "scroll"] },
-  { cat: "act", types: ["click", "type", "hover", "keypress"] },
+  { cat: "act", types: ["click", "type", "clearField", "hover", "keypress"] },
   { cat: "data", types: ["loadExcel", "extract", "extractTable", "setVar", "appendReport", "exportCsv"] },
   { cat: "logic", types: ["condition", "loopList", "loopCount", "loopContinue", "loopBreak", "stopMacro"] },
   { cat: "code", types: ["customJs"] },
@@ -100,6 +101,7 @@ export function describeStep(step) {
       return truncate(step.url, 70);
     case "click":
     case "hover":
+    case "clearField":
     case "waitFor":
       return truncate(step.selector, 50) + scopeText(step);
     case "type":
@@ -153,7 +155,7 @@ export function describeStep(step) {
 
 // ---------------- проверка заполненности ----------------
 
-const SELECTOR_STEPS = ["click", "hover", "type", "waitFor", "extract"];
+const SELECTOR_STEPS = ["click", "hover", "type", "clearField", "waitFor", "extract"];
 
 export function validateStep(step) {
   const out = [];

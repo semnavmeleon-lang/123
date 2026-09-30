@@ -123,7 +123,7 @@ input[type=file] { font: inherit; }
 .tabbar .lbl { color: var(--muted); white-space: nowrap; }
 .tabbar select { max-width: 460px; height: 26px; }
 
-.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(340px, 5fr) minmax(420px, 6fr); }
+.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(320px, 4fr) minmax(440px, 6fr); }
 .pane { min-height: 0; overflow: auto; background: var(--surface); }
 .structure { border-right: 1px solid var(--line-strong); }
 .pane-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
@@ -310,3 +310,11 @@ body.popup { width: 380px; min-height: 200px; height: auto; background: var(--su
   .workspace { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); }
   .structure { border-right: 0; border-bottom: 1px solid var(--line-strong); }
 }
+
+/* поля не должны сжиматься соседними элементами: список не шире своей колонки */
+.insp-body select, .modal-body select { max-width: 100%; }
+.value-field { min-width: 0; }
+.value-field > select, .value-field > input { width: 100%; }
+/* список в строке рядом с полями занимает столько, сколько нужно его содержимому, а не всю строку */
+.row > select, .pick-main > select, .test-line > select { width: auto; flex: none; max-width: 45%; }
+.row > .btn, .row > .icon-btn { flex: none; }

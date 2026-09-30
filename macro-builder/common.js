@@ -94,6 +94,9 @@ export function defaultStep(type) {
     case "click":
       step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 8000 };
       break;
+    case "clearField":
+      step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 8000 };
+      break;
     case "hover":
       step = { id, type, selectorType: "css", selector: "", frameUrlIncludes: "", ...SCOPE, index: 0, timeoutMs: 8000 };
       break;
@@ -238,6 +241,7 @@ export const STEP_LABELS = {
   navigate: "Открыть страницу",
   click: "Клик",
   type: "Ввести текст",
+  clearField: "Очистить поле",
   wait: "Пауза",
   waitFor: "Дождаться элемента",
   extract: "Считать значение со страницы",
@@ -262,7 +266,7 @@ export const STEP_LABELS = {
 
 export const STEP_GROUPS = [
   { label: "Навигация", types: ["navigate", "wait", "waitFor", "scroll", "switchTab", "closeTab"] },
-  { label: "Взаимодействие", types: ["click", "hover", "type", "keypress"] },
+  { label: "Взаимодействие", types: ["click", "hover", "type", "clearField", "keypress"] },
   { label: "Данные", types: ["loadExcel", "extract", "extractTable", "setVar", "appendReport", "exportCsv"] },
   { label: "Логика", types: ["condition", "loopCount", "loopList", "loopContinue", "loopBreak", "stopMacro"] },
   { label: "Код", types: ["customJs"] },
@@ -270,7 +274,7 @@ export const STEP_GROUPS = [
 
 // Шаги, у которых есть смысл в поле "селектор + фрейм" (используется builder.js,
 // чтобы не дублировать список типов в разметке).
-export const SELECTOR_STEP_TYPES = ["click", "hover", "type", "waitFor", "extract", "extractTable", "condition", "switchTab"];
+export const SELECTOR_STEP_TYPES = ["click", "hover", "type", "clearField", "waitFor", "extract", "extractTable", "condition", "switchTab"];
 
 export function newTrigger(type) {
   const id = uid("t");

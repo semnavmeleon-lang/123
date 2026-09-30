@@ -167,6 +167,28 @@ try {
   assert.equal(r.progress.length, 4, "прогресс для каждой из 4 записей");
   assert.ok(!r.logs.some((l) => /продолжаю/.test(l)));
 
+  // ---------- 2c. очистка поля ----------
+  console.log("== 2c. «Очистить поле»: стирает текст, обычный «Ввести текст» без очистки дописывает");
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports"]));
+  const clearMacro = {
+    id: "m_clear", name: "clear", updatedAt: 0, openInNewTab: true, inputs: [], triggers: [],
+    steps: [
+      st("navigate", { url: base }),
+      st("type", { selector: "#q", value: "abc" }),
+      st("type", { selector: "#q", value: "def", clear: false }),
+      st("extract", { selector: "#q", attr: "value", varName: "v1", timeoutMs: 1500 }),
+      st("clearField", { selector: "#q", timeoutMs: 1500 }),
+      st("extract", { selector: "#q", attr: "value", varName: "v2", timeoutMs: 1500 }),
+      st("clearField", { selector: ".dots-нет", timeoutMs: 800 }),
+    ],
+  };
+  r = await runMacro(b, { ...clearMacro, steps: clearMacro.steps.slice(0, 6).concat([st("appendReport", { filename: "e2e-clear.md", header: "", template: "v1=${v1};v2=${v2}" })]) });
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await storage(b, "mb_reports"))["e2e-clear.md"].text, "v1=abcdef;v2=\n");
+  r = await runMacro(b, clearMacro);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Элемент не найден: \.dots-нет/, "нет такого поля - понятная ошибка");
+
   // ---------- 3. сигналы, setVar, старое условие, stopMacro ----------
   console.log("== 3. continue / break / increment / старое условие / stopMacro");
   const legacyCond = { id: "old1", type: "condition", selectorType: "css", selector: "#q", frameUrlIncludes: "", mode: "notExists", timeoutMs: 3000,

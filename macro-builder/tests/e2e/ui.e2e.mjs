@@ -184,9 +184,8 @@ try {
   assert.match(await row("type").locator(".tr-detail").innerText(), /#q ← \$\{fio\}/);
   // обратно на свой текст
   await insp.locator('[data-role="value-source"]').first().selectOption("");
-  await insp.locator('[data-role="value-field"] input[type=text]').fill("Иванов");
-  await insp.locator('[data-role="insert-value"]').first().selectOption("${polis}");
-  assert.equal(await insp.locator('[data-role="value-field"] input[type=text]').inputValue(), "Иванов${polis}");
+  await insp.locator('[data-role="value-field"] input[type=text]').fill("Иванов ${polis}");
+  assert.equal(await insp.locator('[data-role="insert-value"]').count(), 0, "рядом с полем ввода нет лишнего списка «Вставить значение»");
   await b.waitForTimeout(500);
 
   // ---------- 8. красная подсветка элементов на странице ----------
@@ -260,7 +259,7 @@ try {
   console.log("описание:", detail);
   assert.match(detail, /\.result есть на странице ИЛИ \$\{fio\} длина > 10/);
   assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
-  await tests.nth(0).locator("select").last().selectOption("yes");
+  await tests.nth(0).locator("select").nth(1).selectOption("yes"); // kind, «есть/нет», тип селектора
   assert.match(await row("condition").locator(".tr-detail").first().innerText(), /\.result нет на странице/);
   // предупреждение: шаг без селектора, клик по статусу выбирает его
   await addTop();
@@ -324,6 +323,42 @@ try {
   fs.writeFileSync(one, JSON.stringify([restored]));
   await b.locator('[data-role="import-file"]').setInputFiles(one);
   await b.waitForFunction(async () => ((await chrome.storage.local.get("mb_macros")).mb_macros || []).filter((m) => m.name === "Проверка строк").length === 2);
+
+  // ---------- 12b. раскладка: поля не сжимаются, лишних списков нет ----------
+  console.log("== 12b. раскладка всех шагов при таблице в макросе (две ширины окна)");
+  await b.locator('[data-role="macro-list"] .macro-item', { hasText: "Проверка строк" }).first().click();
+  await b.waitForSelector('[data-role="step-row"][data-step-type="loadExcel"]');
+  const ALL = ["navigate", "wait", "waitFor", "switchTab", "closeTab", "scroll", "click", "type", "clearField", "hover", "keypress", "loadExcel",
+    "extract", "extractTable", "setVar", "appendReport", "exportCsv", "condition", "loopList", "loopCount", "loopContinue", "loopBreak", "stopMacro", "customJs"];
+  const measure = () => b.evaluate(() => {
+    const box = document.querySelector('[data-role="inspector"]');
+    const bad = [];
+    for (const el of box.querySelectorAll("input[type=text], input:not([type]), textarea")) {
+      if (el.closest("th") || el.closest(".rule") || el.closest(".tree") || el.offsetParent === null) continue;
+      if (el.getBoundingClientRect().width < 150) bad.push((el.placeholder || el.className || el.tagName) + ": " + Math.round(el.getBoundingClientRect().width));
+    }
+    for (const sel of box.querySelectorAll("select")) {
+      if (sel.offsetParent !== null && sel.getBoundingClientRect().right > box.getBoundingClientRect().right + 1) bad.push("select вылез: " + sel.title);
+    }
+    return { bad, overflow: box.scrollWidth - box.clientWidth, inserts: box.querySelectorAll('[data-role="insert-value"]').length, selects: box.querySelectorAll("select").length };
+  });
+  for (const width of [1360, 1100]) {
+    await b.setViewportSize({ width, height: 800 });
+    for (const t of ALL) {
+      await b.locator('[data-role="steps"] > [data-role="add-step"]').click();
+      await b.locator(`[data-add="${t}"]`).click();
+      const m = await measure();
+      assert.deepEqual(m.bad, [], `шаг ${t} при ширине ${width}: сжатые поля ${JSON.stringify(m.bad)}`);
+      assert.ok(m.overflow <= 1, `шаг ${t} при ширине ${width}: панель шире окна на ${m.overflow}px`);
+      if (t === "navigate") assert.equal(m.selects, 0, "у «Открыть страницу» одно поле, без списков");
+      if (t !== "appendReport") assert.equal(m.inserts, 0, `у шага ${t} нет списка «Вставить значение»`);
+    }
+    // лишние шаги убираем, чтобы следующая ширина начиналась с чистого макроса
+    for (let i = 0; i < ALL.length; i++) {
+      await b.locator('[data-role="inspector"] .insp-actions button', { hasText: "Удалить" }).click();
+    }
+  }
+  await b.setViewportSize({ width: 1280, height: 720 });
 
   // ---------- 13. весь интерфейс без эмодзи ----------
   console.log("== 13. полный обход: ни на одном экране нет эмодзи");

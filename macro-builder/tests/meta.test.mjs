@@ -34,6 +34,7 @@ test("describeStep: основные шаги читаются как корот
   assert.equal(describeStep(st("wait", { ms: 2000 })), "2 с");
   assert.equal(describeStep(st("click", { selector: ".dots", scopeSelector: "tr", scopeText: "${fio}" })), ".dots · в строке «${fio}»");
   assert.equal(describeStep(st("type", { selector: "#q", value: "${fio}", pressEnter: true })), "#q ← ${fio} ⏎");
+  assert.equal(describeStep(st("clearField", { selector: "#q", scopeSelector: "tr", scopeText: "${fio}" })), "#q · в строке «${fio}»");
   assert.equal(describeStep(st("extract", { selector: ".holder", varName: "holder", multiple: true })), ".holder → holder (список)");
   assert.equal(describeStep(st("setVar", { varName: "n", mode: "increment", value: "" })), "n += 1");
   assert.equal(describeStep(st("setVar", { varName: "status", value: "OK" })), "status = OK");
@@ -66,6 +67,8 @@ test("describeStep: условие читается как предложени�
 
 test("validateStep: пустые шаги дают понятные замечания, заполненные - нет", () => {
   assert.deepEqual(validateStep(st("click")), ["Укажите элемент на странице"]);
+  assert.deepEqual(validateStep(st("clearField")), ["Укажите элемент на странице"]);
+  assert.deepEqual(validateStep(st("clearField", { selector: "#q" })), []);
   assert.deepEqual(validateStep(st("click", { selector: ".x" })), []);
   assert.deepEqual(validateStep(st("navigate")), ["Укажите адрес страницы"]);
   assert.deepEqual(validateStep(st("navigate", { url: "https://a.ru" })), []);

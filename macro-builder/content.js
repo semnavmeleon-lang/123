@@ -162,6 +162,23 @@
     return null;
   }
 
+  // Стирает текст в поле ввода / textarea / contenteditable; фреймворки (React, Vue) получают input и change
+  async function execClear(step) {
+    const el = await waitFor(step, Number(step.timeoutMs) || 8000);
+    if (!el) throw new Error("Элемент не найден: " + step.selector);
+    el.scrollIntoView({ block: "center" });
+    el.focus();
+    if (el.isContentEditable) {
+      el.textContent = "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if ("value" in el) {
+      setNativeValue(el, "");
+    } else {
+      throw new Error("Элемент не является полем ввода: " + step.selector);
+    }
+    return null;
+  }
+
   async function execWaitFor(step) {
     const el = await waitFor(step, Number(step.timeoutMs) || 15000);
     if (!el) throw new Error("Не дождались элемента: " + step.selector);
@@ -249,6 +266,8 @@
         return { ok: true, value: await execHover(step) };
       case "type":
         return { ok: true, value: await execType(step) };
+      case "clearField":
+        return { ok: true, value: await execClear(step) };
       case "waitFor":
         return { ok: true, value: await execWaitFor(step) };
       case "extract":
