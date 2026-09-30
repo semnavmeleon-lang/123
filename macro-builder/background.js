@@ -492,14 +492,16 @@ async function runLoopList(ctx, step) {
   const key = ctx.macroId + ":" + step.id;
   const sig = listSignature(list);
   let start = 0;
-  if (step.resume) {
+  const useProgress = step.resume && !ctx.trialLimit;
+  if (useProgress) {
     const saved = (await loadProgress())[key];
     if (saved && saved.sig === sig && saved.done > 0 && saved.done <= list.length) {
       start = saved.done;
       ctx.log({ type: step.type, status: "info", message: `продолжаю с записи ${start + 1} из ${list.length} (прогресс сохранён)` });
     }
   }
-  const limit = Math.max(0, Number(step.limit) || 0);
+  let limit = Math.max(0, Number(step.limit) || 0);
+  if (ctx.trialLimit) limit = limit ? Math.min(limit, ctx.trialLimit) : ctx.trialLimit;
   let processed = 0;
   let finished = true;
   for (let i = start; i < list.length; i++) {
@@ -519,6 +521,9 @@ async function runLoopList(ctx, step) {
       status: "info",
       message: `запись ${i + 1} из ${list.length}${item && item._row ? ` (строка Excel ${item._row})` : ""}`,
     });
+    // полоса прогресса в интерфейсе: подпись - первое текстовое поле записи
+    const label = item && typeof item === "object" ? Object.entries(item).find(([k, v]) => !k.startsWith("_") && v)?.[1] : item;
+    broadcast({ type: "mb-progress", runId: ctx.runId, stepId: step.id, index: i + 1, total: list.length, label: String(label ?? "").slice(0, 80) });
     ctx.created.length = 0;
     const depth = ctx.tabStack.length;
     let brk = false;
@@ -547,10 +552,10 @@ async function runLoopList(ctx, step) {
     }
     await unwindTabs(ctx, depth);
     processed++;
-    if (step.resume) await saveProgressEntry(key, { sig, done: i + 1, at: Date.now() });
+    if (useProgress) await saveProgressEntry(key, { sig, done: i + 1, at: Date.now() });
     if (brk) break;
   }
-  if (step.resume && finished) await saveProgressEntry(key, null);
+  if (useProgress && finished) await saveProgressEntry(key, null);
 }
 
 async function getActiveTabId() {
@@ -558,7 +563,7 @@ async function getActiveTabId() {
   return tabs[0] && tabs[0].id;
 }
 
-async function runMacro(macro, inputValues, runId, existingTabId) {
+async function runMacro(macro, inputValues, runId, existingTabId, trialLimit) {
   const cancelState = { cancelled: false };
   runs.set(runId, cancelState);
   const created = [];
@@ -566,6 +571,8 @@ async function runMacro(macro, inputValues, runId, existingTabId) {
   chrome.tabs.onCreated.addListener(onCreated);
   const ctx = {
     macroId: macro.id,
+    runId,
+    trialLimit: Math.max(0, Number(trialLimit) || 0), // пробный прогон: не больше N записей в каждом цикле, прогресс не сохраняется
     tabId: null,
     windowId: null,
     tabStack: [], // вкладки, из которых макрос перешёл в новые (для «закрыть и вернуться»)
@@ -717,7 +724,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "runMacro") {
     (async () => {
       const tabId = msg.macro.openInNewTab ? null : msg.tabId || (await getActiveTabId());
-      runMacro(msg.macro, msg.inputValues || {}, msg.runId, tabId);
+      runMacro(msg.macro, msg.inputValues || {}, msg.runId, tabId, msg.trialLimit);
     })();
     sendResponse({ started: true });
     return false;

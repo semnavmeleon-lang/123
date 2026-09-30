@@ -70,22 +70,24 @@ const ctx = await chromium.launchPersistentContext(path.join(TMP, "profile"), {
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
 });
 
-async function runMacro(b, macro) {
-  return b.evaluate(async (macro) => {
+async function runMacro(b, macro, trialLimit = 0) {
+  return b.evaluate(async ([macro, trialLimit]) => {
     await chrome.storage.local.set({ mb_macros: [macro] });
     const runId = "t" + Math.random();
     const logs = [];
+    const progress = [];
     return new Promise((resolve) => {
       const fn = (msg) => {
         if (!msg || msg.runId !== runId) return;
+        if (msg.type === "mb-progress") progress.push(`${msg.index}/${msg.total}:${msg.label}`);
         if (msg.type === "mb-log") logs.push(`${msg.entry.type} ${msg.entry.status} ${msg.entry.message || ""}`);
-        if (msg.type === "mb-run-done") { chrome.runtime.onMessage.removeListener(fn); resolve({ ok: true, logs }); }
-        if (msg.type === "mb-run-error") { chrome.runtime.onMessage.removeListener(fn); resolve({ ok: false, error: msg.message, logs }); }
+        if (msg.type === "mb-run-done") { chrome.runtime.onMessage.removeListener(fn); resolve({ ok: true, logs, progress }); }
+        if (msg.type === "mb-run-error") { chrome.runtime.onMessage.removeListener(fn); resolve({ ok: false, error: msg.message, logs, progress }); }
       };
       chrome.runtime.onMessage.addListener(fn);
-      chrome.runtime.sendMessage({ action: "runMacro", macro, inputValues: {}, runId, tabId: null });
+      chrome.runtime.sendMessage({ action: "runMacro", macro, inputValues: {}, runId, tabId: null, trialLimit });
     });
-  }, macro);
+  }, [macro, trialLimit]);
 }
 const storage = (b, key) => b.evaluate(async (k) => (await chrome.storage.local.get(k))[k], key);
 
@@ -98,7 +100,7 @@ try {
   const errors = [];
   b.on("pageerror", (e) => errors.push(e.message));
   await b.goto(`chrome-extension://${extId}/builder.html`);
-  await b.waitForSelector("#builderCard");
+  await b.waitForSelector(".side");
 
   // ---------- 1. сценарий пользователя ----------
   console.log("== 1. проверка строк: поиск -> сравнение -> три точки -> новая вкладка -> отчёт");
@@ -147,6 +149,23 @@ try {
   assert.match(rep2, /Тишин/); assert.match(rep2, /Несуществующий/); assert.match(rep2, /Сломанов/);
   assert.equal(((rep2.match(/# Проверка/g)) || []).length, 1, "заголовок не дублируется при дозаписи");
   assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), [], "цикл дошёл до конца - прогресс очищен");
+
+  // ---------- 2b. пробный прогон ----------
+  console.log("== 2b. пробный прогон (trialLimit): ограничивает записи, прогресс не сохраняется, есть события прогресса");
+  await b.evaluate(() => chrome.storage.local.remove(["mb_reports", "mb_progress"]));
+  const trialM = checkerMacro("trial", { resume: true }, { resetPerRun: false });
+  r = await runMacro(b, trialM, 1);
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.progress, ["1/4:Тишин Юрий Романович"], "одна запись, подпись - первое поле");
+  const trialRep = (await storage(b, "mb_reports"))["e2e-report.md"].text;
+  assert.match(trialRep, /Тишин/);
+  assert.doesNotMatch(trialRep, /Шапарь/);
+  assert.deepEqual(Object.keys((await storage(b, "mb_progress")) || {}), [], "пробный прогон не сохраняет прогресс");
+  // обычный прогон после пробного идёт с начала
+  r = await runMacro(b, trialM, 0);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.progress.length, 4, "прогресс для каждой из 4 записей");
+  assert.ok(!r.logs.some((l) => /продолжаю/.test(l)));
 
   // ---------- 3. сигналы, setVar, старое условие, stopMacro ----------
   console.log("== 3. continue / break / increment / старое условие / stopMacro");
