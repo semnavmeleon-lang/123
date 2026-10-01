@@ -577,28 +577,122 @@
   let pickerInputOnly = false;
   let pickerTarget = null;
 
-  // Что выбрано под курсором: в режиме «поле ввода» - настоящее поле (даже если курсор над обёрткой,
-  // подписью или placeholder-надписью), иначе - сам элемент под курсором
-  function pickerResolve(e) {
-    const raw = (e.composedPath && e.composedPath()[0]) || e.target;
-    if (!raw || raw.nodeType !== 1) return { raw: null, target: null };
-    if (!pickerInputOnly) return { raw, target: raw };
-    return { raw, target: resolveInputElement(raw, { x: e.clientX, y: e.clientY }) };
+  // Элементы под точкой сверху вниз, включая закрытые слоями: портал кладёт поверх формы прозрачный слой
+  // «редактирование невозможно», и обычный e.target - это слой, а не текст под ним. В открытый shadow DOM заходим.
+  function stackAt(x, y) {
+    const out = [];
+    const seen = new Set();
+    const visit = (root) => {
+      let list = [];
+      try {
+        list = root.elementsFromPoint(x, y);
+      } catch (e) {}
+      for (const el of list) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+        if (el.shadowRoot) visit(el.shadowRoot); // то, что внутри, лежит выше самого хоста
+        out.push(el);
+      }
+    };
+    visit(document);
+    return out;
   }
 
-  function onPickerMove(e) {
+  // Есть ли у самого элемента (не у потомков) текст, по которому попадает точка
+  function hasTextAt(el, x, y) {
+    for (const node of el.childNodes) {
+      if (node.nodeType !== 3 || !node.nodeValue.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const r of range.getClientRects()) {
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+      }
+    }
+    return false;
+  }
+
+  // Что на самом деле нужно пользователю под курсором: самый верхний элемент, у которого под курсором свой текст;
+  // если текста нет - самый маленький из элементов под курсором (внутренний, а не слой поверх всего)
+  function smartTargetAt(x, y, fallback) {
+    const stack = stackAt(x, y).filter((el) => el !== document.documentElement && el !== document.body);
+    if (!stack.length) return fallback;
+    for (const el of stack) if (hasTextAt(el, x, y)) return el;
+    let best = null;
+    let bestArea = Infinity;
+    for (const el of stack) {
+      const r = el.getBoundingClientRect();
+      const area = r.width * r.height;
+      if (area > 0 && area < bestArea) {
+        best = el;
+        bestArea = area;
+      }
+    }
+    return best || stack[0];
+  }
+
+  // Что выбрано под курсором. Обычно - то, что браузер видит сверху. Если зажат Ctrl (режим проникновения) -
+  // то, что лежит под слоями поверх страницы: элемент с текстом под курсором или самый маленький из элементов под
+  // курсором. В режиме «поле ввода» дальше определяется настоящее поле (даже если курсор над обёрткой, подписью
+  // или placeholder-надписью). Стрелки вверх/вниз меняют выбор на родителя / обратно (pickerUp - уровней выше).
+  let pickerBase = null;
+  let pickerUp = 0;
+  let pickerCtrl = false;
+
+  // Слой поверх страницы: у самого элемента под курсором нет текста, а под ним (в той же точке) лежит текст
+  function isCoverLayer(top, x, y) {
+    if (hasTextAt(top, x, y)) return false;
+    const under = smartTargetAt(x, y, top);
+    return under !== top && hasTextAt(under, x, y);
+  }
+
+  // Предок на n уровней выше (но не body и не выше)
+  function ancestorAt(el, n) {
+    let t = el;
+    for (let i = 0; i < n && t.parentElement && t.parentElement !== document.body; i++) t = t.parentElement;
+    return t;
+  }
+
+  function pickerResolve(e) {
+    const top = (e.composedPath && e.composedPath()[0]) || e.target;
+    if (!top || top.nodeType !== 1) return { raw: null, target: null, cover: false };
+    const pierce = pickerCtrl;
+    const base = pierce ? smartTargetAt(e.clientX, e.clientY, top) : top;
+    if (base !== pickerBase) {
+      pickerBase = base;
+      pickerUp = 0;
+    }
+    const cover = !pierce && isCoverLayer(top, e.clientX, e.clientY);
+    if (pickerInputOnly) return { raw: base, target: resolveInputElement(base, { x: e.clientX, y: e.clientY }), cover };
+    return { raw: base, target: ancestorAt(base, pickerUp), cover };
+  }
+
+  function showPickerTarget(raw, target, cover) {
     const ov = ensureOverlay();
-    const { raw, target } = pickerResolve(e);
     pickerTarget = target;
     if (!raw) return;
     ov.style.display = "block";
+    const hint = cover ? "   [слой поверх страницы: зажмите Ctrl, чтобы выбрать то, что под ним]" : pickerCtrl ? "   [Ctrl: сквозь слой]" : "";
     if (pickerInputOnly && !target) {
-      ov.firstChild.textContent = "Здесь нет поля ввода: " + describeElement(raw);
+      ov.firstChild.textContent = "Здесь нет поля ввода: " + describeElement(raw) + hint;
       placeHighlightBox(ov, raw);
       return;
     }
-    ov.firstChild.textContent = describeElement(target) + (pickerInputOnly && target !== raw ? "   (поле ввода)" : "");
+    ov.firstChild.textContent =
+      describeElement(target) + (pickerInputOnly && target !== raw ? "   (поле ввода)" : "") + (!pickerInputOnly && target !== raw ? `   (родитель, уровней вверх: ${pickerUp})` : "") + hint;
     placeHighlightBox(ov, target);
+  }
+
+  let pickerLast = null; // последнее положение курсора - для перерисовки при нажатии клавиш
+  function renderPicker() {
+    if (!pickerLast) return;
+    const { raw, target, cover } = pickerResolve(pickerLast);
+    showPickerTarget(raw, target, cover);
+  }
+
+  function onPickerMove(e) {
+    pickerCtrl = e.ctrlKey || e.metaKey;
+    pickerLast = { clientX: e.clientX, clientY: e.clientY, target: e.target, composedPath: () => (e.composedPath ? e.composedPath() : [e.target]) };
+    renderPicker();
   }
 
   // ---------------- построение устойчивого селектора ----------------
@@ -694,6 +788,7 @@
   function onPickerClick(e) {
     e.preventDefault();
     e.stopPropagation();
+    pickerCtrl = e.ctrlKey || e.metaKey;
     const { raw, target } = pickerResolve(e);
     if (pickerInputOnly && !target) {
       // это не поле ввода: выбор не завершаем, даём кликнуть ещё раз
@@ -711,24 +806,51 @@
     });
   }
 
-  function onPickerEsc(e) {
-    if (e.key === "Escape") stopPicker();
+  function onPickerKey(e) {
+    if (e.key === "Escape") {
+      stopPicker();
+      return;
+    }
+    // Ctrl (или Cmd) включает / выключает проникновение сквозь слои сразу, не дожидаясь движения мыши
+    if (e.key === "Control" || e.key === "Meta") {
+      pickerCtrl = e.type === "keydown";
+      renderPicker();
+      return;
+    }
+    // стрелка вверх - выбрать родителя (весь блок), вниз - вернуться к вложенному
+    if (e.type === "keydown" && (e.key === "ArrowUp" || e.key === "ArrowDown") && !pickerInputOnly && pickerBase && pickerLast) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "ArrowUp") {
+        if (ancestorAt(pickerBase, pickerUp + 1) !== ancestorAt(pickerBase, pickerUp)) pickerUp++;
+      } else if (pickerUp > 0) {
+        pickerUp--;
+      }
+      renderPicker();
+    }
   }
 
   function startPicker(inputOnly) {
     pickerInputOnly = !!inputOnly;
     if (pickerActive) return;
     pickerActive = true;
+    pickerBase = null;
+    pickerUp = 0;
+    pickerCtrl = false;
+    pickerLast = null;
+    showBanner(inputOnly ? "Кликните по полю ввода. Ctrl - сквозь слой поверх страницы. Esc - отмена" : "Кликните нужный элемент. Ctrl - выбрать сквозь слой поверх страницы, стрелка вверх - родитель, вниз - обратно. Esc - отмена");
     document.addEventListener("mousemove", onPickerMove, true);
     document.addEventListener("click", onPickerClick, true);
-    document.addEventListener("keydown", onPickerEsc, true);
+    document.addEventListener("keydown", onPickerKey, true);
+    document.addEventListener("keyup", onPickerKey, true);
   }
 
   function stopPicker() {
     pickerActive = false;
     document.removeEventListener("mousemove", onPickerMove, true);
     document.removeEventListener("click", onPickerClick, true);
-    document.removeEventListener("keydown", onPickerEsc, true);
+    document.removeEventListener("keydown", onPickerKey, true);
+    document.removeEventListener("keyup", onPickerKey, true);
     if (overlay) overlay.style.display = "none";
   }
 

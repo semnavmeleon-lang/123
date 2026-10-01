@@ -32,6 +32,15 @@ const XLSX = require(path.join(EXT, "vendor/xlsx.full.min.js"));
 // Страница, на которой проверяются выбор и подсветка элементов
 const server = http.createServer((req, res) => {
   res.setHeader("content-type", "text/html; charset=utf-8");
+  // карточка полиса, поверх которой лежит прозрачный слой «редактирование невозможно» (как на портале)
+  if (req.url.startsWith("/overlay")) {
+    return res.end(`<!doctype html><meta charset="utf-8"><title>Слой</title>
+      <div id="card" style="position:relative;width:520px;padding:24px;border:1px solid #999;margin:40px">
+        <p>Страхователь</p>
+        <span id="nm">Хабекирова Мадина Мухамедовна, дата рождения: <b id="dob">28.12.1973</b></span>
+        <div id="lock" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,0,0,.12)">&nbsp;</div>
+      </div>`);
+  }
   res.end(`<!doctype html><meta charset="utf-8"><title>Тест-страница</title><style>.p-calendar{display:inline-block;padding:14px;border:1px solid #999}</style>
     <input id="q" placeholder="ФИО">
     <table><tr class="row"><td>Тишин</td><td><button class="dots">Действия</button></td></tr>
@@ -426,6 +435,40 @@ try {
   await row("loopList").last().click();
   await insp.getByRole("button", { name: "Удалить" }).click();
   assert.match(await b.locator('[data-role="status"]').innerText(), /Готов к запуску/);
+
+  // ---------- 8d. пипетка сквозь слой поверх страницы ----------
+  console.log("== 8d. пипетка: без Ctrl берётся слой поверх страницы, с Ctrl - текст под ним; стрелки выбирают родителя");
+  await page.goto(`http://localhost:${PORT}/overlay`);
+  await b.bringToFront();
+  await addTop();
+  await b.locator('[data-add="extract"]').click();
+  await insp.getByRole("button", { name: "Указать на странице" }).click();
+  await page.bringToFront();
+  const nmBox = await page.locator("#nm").boundingBox();
+  const over = { x: nmBox.x + 30, y: nmBox.y + nmBox.height / 2 }; // над текстом ФИО, но под слоем
+  const pickLabel = () => page.locator(".__mb-hl-label").first().innerText();
+  const labelIs = (re) => page.waitForFunction((src) => new RegExp(src).test(document.querySelector(".__mb-hl-label")?.textContent || ""), re);
+  await page.mouse.move(over.x, over.y);
+  await labelIs("^div#lock");
+  assert.match(await pickLabel(), /слой поверх страницы: зажмите Ctrl/, "подсказка про Ctrl, когда сверху слой без текста");
+  await page.keyboard.down("Control");
+  await labelIs("^span#nm");
+  assert.match(await pickLabel(), /Ctrl: сквозь слой/);
+  await page.keyboard.press("ArrowUp");
+  await labelIs("^div#card");
+  assert.match(await pickLabel(), /родитель, уровней вверх: 1/);
+  await page.keyboard.press("ArrowDown");
+  await labelIs("^span#nm");
+  await page.mouse.move(nmBox.x + nmBox.width - 8, over.y); // над датой внутри того же текста
+  await labelIs("^b#dob");
+  await page.mouse.move(over.x, over.y);
+  await labelIs("^span#nm");
+  await page.mouse.click(over.x, over.y); // клик с зажатым Ctrl выбирает текст под слоем
+  await page.keyboard.up("Control");
+  await b.bringToFront();
+  await b.waitForFunction(() => document.querySelector('[data-role="inspector"] [data-role="pick"] input')?.value === "#nm");
+  await insp.getByRole("button", { name: "Удалить" }).click();
+  await page.goto(`http://localhost:${PORT}/`);
 
   // ---------- 9. условия ----------
   console.log("== 9. условие: проверки, предупреждения, переход к проблемному шагу");
