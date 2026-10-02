@@ -1,0 +1,147 @@
+' Сохраняет ВЫДЕЛЕННЫЕ в Outlook письма на диск: одно письмо = один PDF.
+' Принтер не нужен. Нужен классический Outlook (PDF делает встроенный Word).
+' Если PDF для письма не получился, оно сохраняется как .msg.
+Option Explicit
+
+' Куда сохранять. Пусто = при запуске откроется окно выбора папки.
+' Если окно выбора не открывается, впишите путь, например "C:\Users\Иван\Documents\Письма"
+Private Const OUT_FOLDER As String = ""
+
+Public Sub SaveSelectedMailsAsPdf()
+    Dim sel As Object, mails As New Collection, itm As Object
+    Dim i As Long, outDir As String, baseName As String, p As String
+    Dim ok As Boolean
+    Dim nPdf As Long, nMsg As Long, nSkip As Long, nFail As Long
+
+    If Application.ActiveExplorer Is Nothing Then
+        MsgBox "Откройте главное окно Outlook и выделите письма.", vbExclamation
+        Exit Sub
+    End If
+    Set sel = Application.ActiveExplorer.Selection
+    If sel.Count = 0 Then
+        MsgBox "Сначала выделите письма в списке.", vbExclamation
+        Exit Sub
+    End If
+    For i = 1 To sel.Count
+        mails.Add sel.Item(i)
+    Next i
+
+    outDir = OUT_FOLDER
+    If Len(outDir) = 0 Then outDir = PickFolder()
+    If Len(outDir) = 0 Then Exit Sub
+    If Right$(outDir, 1) = "\" Then outDir = Left$(outDir, Len(outDir) - 1)
+    If Len(Dir$(outDir, vbDirectory)) = 0 Then
+        On Error Resume Next
+        MkDir outDir
+        On Error GoTo 0
+    End If
+    outDir = outDir & "\"
+
+    For Each itm In mails
+        If TypeName(itm) <> "MailItem" Then
+            nSkip = nSkip + 1
+        Else
+            baseName = Format$(MailDate(itm), "yyyy-mm-dd_hhnn") & "_" & SafeName(itm.Subject)
+            p = UniquePath(outDir, baseName, ".pdf")
+            ok = ExportPdf(itm, p, False)
+            If Not ok Then ok = ExportPdf(itm, p, True)
+            If ok Then
+                nPdf = nPdf + 1
+            Else
+                p = UniquePath(outDir, baseName, ".msg")
+                On Error Resume Next
+                itm.SaveAs p, 9                     ' olMSGUnicode
+                If Err.Number = 0 Then nMsg = nMsg + 1 Else nFail = nFail + 1
+                On Error GoTo 0
+            End If
+        End If
+        DoEvents
+    Next itm
+
+    MsgBox "Готово." & vbCr & _
+           "PDF: " & nPdf & vbCr & _
+           "Сохранено как .msg (PDF не получился): " & nMsg & vbCr & _
+           "Пропущено (не письма): " & nSkip & vbCr & _
+           "Ошибок: " & nFail & vbCr & vbCr & _
+           "Папка: " & outDir, vbInformation
+End Sub
+
+' PDF через Word-редактор письма. Шапку (От/Кому/Дата/Тема/Вложения) дописываем сверху:
+' она в тело документа сама не входит. Письмо в ящике не меняется (Close olDiscard).
+Private Function ExportPdf(ByVal m As Object, ByVal pdfPath As String, ByVal showWindow As Boolean) As Boolean
+    Dim insp As Object, doc As Object, ok As Boolean
+    On Error Resume Next
+    If showWindow Then m.Display
+    Set insp = m.GetInspector
+    Set doc = insp.WordEditor
+    If Not doc Is Nothing Then
+        doc.Range(0, 0).InsertBefore HeaderText(m)
+        doc.ExportAsFixedFormat OutputFileName:=pdfPath, ExportFormat:=17   ' wdExportFormatPDF
+        ok = (Err.Number = 0)
+    End If
+    If ok Then ok = (Len(Dir$(pdfPath)) > 0)
+    If Not ok Then Kill pdfPath
+    insp.Close 1                                                            ' olDiscard
+    On Error GoTo 0
+    ExportPdf = ok
+End Function
+
+Private Function HeaderText(ByVal m As Object) As String
+    Dim s As String, a As Object, names As String
+    s = "От: " & m.SenderName & vbCr
+    s = s & "Кому: " & m.To & vbCr
+    If Len(m.CC) > 0 Then s = s & "Копия: " & m.CC & vbCr
+    s = s & "Дата: " & Format$(MailDate(m), "dd.mm.yyyy hh:nn") & vbCr
+    s = s & "Тема: " & m.Subject & vbCr
+    For Each a In m.Attachments
+        If Len(names) > 0 Then names = names & ", "
+        names = names & a.FileName
+    Next a
+    If Len(names) > 0 Then s = s & "Вложения: " & names & vbCr
+    HeaderText = s & String(60, "-") & vbCr
+End Function
+
+Private Function MailDate(ByVal m As Object) As Date
+    If Year(m.SentOn) < 3000 Then MailDate = m.SentOn Else MailDate = m.CreationTime
+End Function
+
+Private Function SafeName(ByVal s As String) As String
+    Dim i As Long, c As Long, ch As String, r As String
+    For i = 1 To Len(s)
+        ch = Mid$(s, i, 1)
+        c = AscW(ch)
+        If InStr("\/:*?""<>|", ch) > 0 Or (c >= 0 And c < 32) Then
+            r = r & "_"
+        Else
+            r = r & ch
+        End If
+    Next i
+    r = Trim$(r)
+    If Len(r) > 80 Then r = Trim$(Left$(r, 80))
+    Do While Len(r) > 0 And Right$(r, 1) = "."
+        r = Left$(r, Len(r) - 1)
+    Loop
+    If Len(r) = 0 Then r = "без темы"
+    SafeName = r
+End Function
+
+Private Function UniquePath(ByVal folder As String, ByVal baseName As String, ByVal ext As String) As String
+    Dim p As String, n As Long
+    p = folder & baseName & ext
+    Do While Len(Dir$(p)) > 0
+        n = n + 1
+        p = folder & baseName & " (" & n & ")" & ext
+    Loop
+    UniquePath = p
+End Function
+
+Private Function PickFolder() As String
+    Dim sh As Object, f As Object
+    On Error Resume Next
+    Set sh = CreateObject("Shell.Application")
+    Set f = sh.BrowseForFolder(0, "Куда сохранить письма?", &H41)
+    If Not f Is Nothing Then PickFolder = f.Self.Path
+    On Error GoTo 0
+    If Len(PickFolder) = 0 Then MsgBox "Папка не выбрана, ничего не сохранено." & vbCr & _
+        "Если окно выбора не открывается, впишите путь в OUT_FOLDER в начале макроса.", vbExclamation
+End Function
